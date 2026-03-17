@@ -1,0 +1,28 @@
+[
+  {
+    "instance_id": "sf_bq377",
+    "db": "GITHUB_REPOS",
+    "question": "Extract and count the frequency of all package names listed in the require section of JSON-formatted content",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": null,
+    "final_SQL": null,
+    "Step_counter": 1,
+    "Token_usage": {
+      "input_tokens": 29978,
+      "output_tokens": 7145,
+      "total_tokens": 37123
+    }
+  }
+]

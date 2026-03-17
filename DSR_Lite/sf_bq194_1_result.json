@@ -1,0 +1,38 @@
+[
+  {
+    "instance_id": "sf_bq194",
+    "db": "GITHUB_REPOS",
+    "question": "Among all Python (*.py), R (*.r, *.R, *.Rmd, *.rmd), and IPython notebook (*.ipynb) files in the GitHub sample dataset, which library or module is identified as the second most frequently imported or loaded based on the extracted import statements?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT library, COUNT(*) AS import_count FROM (SELECT CASE WHEN \"content\" ILIKE 'import %' THEN SPLIT_PART(\"content\", ' ', 2) WHEN \"content\" ILIKE 'from %' THEN SPLIT_PART(\"content\", ' ', 2) END AS library FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.py' OR \"sample_path\" ILIKE '%.r' OR \"sample_path\" ILIKE '%.R' OR \"sample_path\" ILIKE '%.Rmd' OR \"sample_path\" ILIKE '%.rmd' OR \"sample_path\" ILIKE '%.ipynb') AS extracted_imports WHERE library IS NOT NULL GROUP BY library ORDER BY import_count DESC LIMIT 1 OFFSET 1 /* Get the second most frequently imported library */",
+    "final_SQL": "SELECT library, COUNT(*) AS import_count FROM (SELECT CASE WHEN \"content\" ILIKE 'import %' THEN SPLIT_PART(\"content\", ' ', 2) WHEN \"content\" ILIKE 'from %' THEN SPLIT_PART(\"content\", ' ', 2) END AS library FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.py' OR \"sample_path\" ILIKE '%.r' OR \"sample_path\" ILIKE '%.R' OR \"sample_path\" ILIKE '%.Rmd' OR \"sample_path\" ILIKE '%.rmd' OR \"sample_path\" ILIKE '%.ipynb') AS extracted_imports WHERE library IS NOT NULL GROUP BY library ORDER BY import_count DESC LIMIT 1 OFFSET 1 /* Get the second most frequently imported library */",
+    "Step_counter": 6,
+    "Token_usage": {
+      "input_tokens": 24616,
+      "output_tokens": 5592,
+      "total_tokens": 30208
+    }
+  }
+]

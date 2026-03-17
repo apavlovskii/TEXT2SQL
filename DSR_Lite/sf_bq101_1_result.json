@@ -1,0 +1,34 @@
+[
+  {
+    "instance_id": "sf_bq101",
+    "db": "GITHUB_REPOS",
+    "question": "From GitHub Repos contents, how can we identify the top 10 most frequently imported package names in Java source files by splitting each file's content into lines, filtering for valid import statements, extracting only the package portion using a suitable regex, grouping by these extracted package names, counting their occurrences, and finally returning the 10 packages that appear most often in descending order of frequency?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT REGEXP_SUBSTR(f.value, '^\\s*import\\s+([a-zA-Z_][a-zA-Z0-9_.]*)', 1, 1) AS package_name FROM \"SAMPLE_CONTENTS\", LATERAL FLATTEN(input => SPLIT(\"content\", '\\n')) f WHERE REGEXP_LIKE(f.value, '^\\s*import\\s+([a-zA-Z_][a-zA-Z0-9_.]*)')",
+    "final_SQL": "SELECT REGEXP_SUBSTR(f.value, '^\\s*import\\s+([a-zA-Z_][a-zA-Z0-9_.]*)', 1, 1) AS package_name FROM \"SAMPLE_CONTENTS\", LATERAL FLATTEN(input => SPLIT(\"content\", '\\n')) f WHERE REGEXP_LIKE(f.value, '^\\s*import\\s+([a-zA-Z_][a-zA-Z0-9_.]*)')",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 113340,
+      "output_tokens": 12562,
+      "total_tokens": 125902
+    }
+  }
+]

@@ -1,0 +1,44 @@
+[
+  {
+    "instance_id": "sf_bq255",
+    "db": "GITHUB_REPOS",
+    "question": "How many commit messages are there in repositories that use the 'Shell' programming language and 'apache-2.0' license, where the length of the commit message is more than 5 characters but less than 10,000 characters, and the messages do not start with the word 'merge', 'update' or 'test'?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES",
+      "GITHUB_REPOS.GITHUB_REPOS.LICENSES",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+      "GITHUB_REPOS.GITHUB_REPOS.LICENSES": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LICENSES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LICENSES": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LICENSES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": []
+      }
+    },
+    "temp_SQL": "SELECT DISTINCT l.\"repo_name\" FROM \"GITHUB_REPOS\".\"LANGUAGES\" l WHERE l.\"language\" = 'Shell';",
+    "final_SQL": "SELECT DISTINCT l.\"repo_name\" FROM \"GITHUB_REPOS\".\"LANGUAGES\" l WHERE l.\"language\" = 'Shell';",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 83260,
+      "output_tokens": 12143,
+      "total_tokens": 95403
+    }
+  }
+]

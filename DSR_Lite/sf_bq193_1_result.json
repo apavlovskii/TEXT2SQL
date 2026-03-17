@@ -1,0 +1,42 @@
+[
+  {
+    "instance_id": "sf_bq193",
+    "db": "GITHUB_REPOS",
+    "question": "Retrieve all non-empty, non-commented lines from `README.md` files in GitHub repositories, excluding lines that are comments (either starting with `#` for Markdown or `//` for code comments). For each line, calculate how often each unique line appears across all repositories and return a comma-separated list of the programming languages used in each repository containing that line, sorted alphabetically, with the results ordered by the frequency of occurrence in descending order.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_REPOS"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_REPOS": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_REPOS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": []
+      }
+    },
+    "temp_SQL": "SELECT \"content\" FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" WHERE \"content\" IS NOT NULL AND \"content\" != '';",
+    "final_SQL": "SELECT \"content\" FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" WHERE \"content\" IS NOT NULL AND \"content\" != '';",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 318466,
+      "output_tokens": 12273,
+      "total_tokens": 330739
+    }
+  }
+]

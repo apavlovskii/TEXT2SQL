@@ -1,0 +1,43 @@
+[
+  {
+    "instance_id": "sf_bq248",
+    "db": "GITHUB_REPOS",
+    "question": "Among all repositories that do not use any programming language whose name (case-insensitively) includes the substring \"python,\" what is the proportion of files whose paths include \"readme.md\" and whose contents contain the phrase \"Copyright (c)\"?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT COUNT(*) FROM \"SAMPLE_FILES\" f JOIN \"LANGUAGES\" l ON f.\"repo_name\" = l.\"repo_name\" WHERE f.\"path\" ILIKE '%readme.md%' AND l.\"language\" IS NULL; /* Count 'readme.md' files in repositories without any programming language */",
+    "final_SQL": "SELECT COUNT(*) FROM \"SAMPLE_FILES\" f JOIN \"LANGUAGES\" l ON f.\"repo_name\" = l.\"repo_name\" WHERE f.\"path\" ILIKE '%readme.md%' AND l.\"language\" IS NULL; /* Count 'readme.md' files in repositories without any programming language */",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 93376,
+      "output_tokens": 13554,
+      "total_tokens": 106930
+    }
+  }
+]

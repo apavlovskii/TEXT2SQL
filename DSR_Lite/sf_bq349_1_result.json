@@ -1,0 +1,39 @@
+[
+  {
+    "instance_id": "sf_bq349",
+    "db": "GEO_OPENSTREETMAP",
+    "question": "Which OpenStreetMap ID from the planet features table corresponds to an administrative boundary, represented as multipolygons, whose total number of 'amenity'-tagged Points of Interest (POIs), as derived from the planet nodes table, is closest to the median count among all such boundaries?",
+    "external_knowledge": "functions_st_dwithin.md",
+    "evidence": "ST_DWITHIN checks if minimum geodesic distance between two GEOGRAPHY objects (points/lines/polygons) is within specified meters. Returns BOOLEAN. Example: ST_DWITHIN(ST_MAKEPOINT(0,0), ST_MAKEPOINT(1,0), 150000) returns True.",
+    "table": [
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES",
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_NODES"
+    ],
+    "col": {
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_NODES": []
+    },
+    "sample_history": {
+      "0": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_NODES": []
+      },
+      "1": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_NODES": []
+      },
+      "2": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_NODES": []
+      }
+    },
+    "temp_SQL": "SELECT n.\"all_tags\" FROM \"GEO_OPENSTREETMAP\".\"PLANET_NODES\" n LIMIT 100; /* Sample larger data from all_tags to check for presence of 'amenity' tags */",
+    "final_SQL": "SELECT n.\"all_tags\" FROM \"GEO_OPENSTREETMAP\".\"PLANET_NODES\" n LIMIT 100; /* Sample larger data from all_tags to check for presence of 'amenity' tags */",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 114886,
+      "output_tokens": 14743,
+      "total_tokens": 129629
+    }
+  }
+]
