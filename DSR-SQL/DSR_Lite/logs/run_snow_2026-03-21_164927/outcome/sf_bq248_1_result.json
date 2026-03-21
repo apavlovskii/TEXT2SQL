@@ -1,0 +1,43 @@
+[
+  {
+    "instance_id": "sf_bq248",
+    "db": "GITHUB_REPOS",
+    "question": "Among all repositories that do not use any programming language whose name (case-insensitively) includes the substring \"python,\" what is the proportion of files whose paths include \"readme.md\" and whose contents contain the phrase \"Copyright (c)\"?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT CAST(COUNT(DISTINCT f.\"repo_name\") AS FLOAT) / COUNT(*) AS \"proportion\" FROM \"GITHUB_REPOS\".\"SAMPLE_FILES\" f JOIN \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" c ON f.\"id\" = c.\"id\" WHERE f.\"path\" ILIKE '%readme.md%' AND c.\"content\" ILIKE '%Copyright (c)%';",
+    "final_SQL": "SELECT CAST(COUNT(DISTINCT f.\"repo_name\") AS FLOAT) / COUNT(*) AS \"proportion\" FROM \"GITHUB_REPOS\".\"SAMPLE_FILES\" f JOIN \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" c ON f.\"id\" = c.\"id\" WHERE f.\"path\" ILIKE '%readme.md%' AND c.\"content\" ILIKE '%Copyright (c)%';",
+    "Step_counter": 4,
+    "Token_usage": {
+      "input_tokens": 37736,
+      "output_tokens": 6940,
+      "total_tokens": 44676
+    }
+  }
+]

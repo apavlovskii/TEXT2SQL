@@ -1,0 +1,39 @@
+[
+  {
+    "instance_id": "sf_bq359",
+    "db": "GITHUB_REPOS",
+    "question": "List the repository names and commit counts for the top two GitHub repositories with JavaScript as the primary language and the highest number of commits.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_COMMITS": []
+      }
+    },
+    "temp_SQL": "SELECT \"repo_name\", \"commit_count\" FROM (SELECT l.\"repo_name\", COUNT(s.\"commit\") AS \"commit_count\" \nFROM \"GITHUB_REPOS\".\"LANGUAGES\" l \nJOIN \"GITHUB_REPOS\".\"SAMPLE_COMMITS\" s ON l.\"repo_name\" = s.\"repo_name\" \nWHERE l.\"language\" ILIKE '%JavaScript%' \nGROUP BY l.\"repo_name\" \nORDER BY \"commit_count\" DESC \nLIMIT 2) AS top_repos;",
+    "final_SQL": "SELECT \"repo_name\", \"commit_count\" FROM (SELECT l.\"repo_name\", COUNT(s.\"commit\") AS \"commit_count\" \nFROM \"GITHUB_REPOS\".\"LANGUAGES\" l \nJOIN \"GITHUB_REPOS\".\"SAMPLE_COMMITS\" s ON l.\"repo_name\" = s.\"repo_name\" \nWHERE l.\"language\" ILIKE '%JavaScript%' \nGROUP BY l.\"repo_name\" \nORDER BY \"commit_count\" DESC \nLIMIT 2) AS top_repos;",
+    "Step_counter": 3,
+    "Token_usage": {
+      "input_tokens": 12823,
+      "output_tokens": 3279,
+      "total_tokens": 16102
+    }
+  }
+]

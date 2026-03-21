@@ -1,0 +1,44 @@
+[
+  {
+    "instance_id": "sf_bq012",
+    "db": "ETHEREUM_BLOCKCHAIN",
+    "question": "Calculate the average balance (in quadrillions, 10^15) of the top 10 Ethereum addresses by net balance, including incoming and outgoing transfers from traces (only successful transactions and excluding call types like delegatecall, callcode, and staticcall), miner rewards (sum of gas fees per block), and sender gas fee deductions. Exclude null addresses and round the result to two decimal places.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS",
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES",
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRANSACTIONS"
+    ],
+    "col": {
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS": [],
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES": [],
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRANSACTIONS": []
+    },
+    "sample_history": {
+      "0": {
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRANSACTIONS": []
+      },
+      "1": {
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRANSACTIONS": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS": []
+      },
+      "2": {
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.BLOCKS": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRACES": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TRANSACTIONS": []
+      }
+    },
+    "temp_SQL": "WITH incoming AS (SELECT \"from_address\", SUM(\"value\") AS \"total_incoming\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRACES\" WHERE \"status\" = 1 AND \"from_address\" IS NOT NULL GROUP BY \"from_address\"), outgoing AS (SELECT \"to_address\", SUM(\"value\") AS \"total_outgoing\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRACES\" WHERE \"status\" = 1 AND \"to_address\" IS NOT NULL GROUP BY \"to_address\"), miner_rewards AS (SELECT t.\"from_address\", SUM(t.\"gas_price\" * t.\"receipt_gas_used\") AS \"total_rewards\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRANSACTIONS\" t GROUP BY t.\"from_address\"), gas_fees AS (SELECT t.\"from_address\", SUM(t.\"gas\") AS \"total_gas_fees\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRANSACTIONS\" t GROUP BY t.\"from_address\") SELECT COALESCE(i.\"from_address\", o.\"to_address\") AS \"address\", COALESCE(i.\"total_incoming\", 0) - COALESCE(o.\"total_outgoing\", 0) + COALESCE(m.\"total_rewards\", 0) - COALESCE(g.\"total_gas_fees\", 0) AS \"net_balance\" FROM incoming i FULL OUTER JOIN outgoing o ON i.\"from_address\" = o.\"to_address\" FULL OUTER JOIN miner_rewards m ON COALESCE(i.\"from_address\", o.\"to_address\") = m.\"from_address\" FULL OUTER JOIN gas_fees g ON COALESCE(i.\"from_address\", o.\"to_address\") = g.\"from_address\" WHERE COALESCE(i.\"from_address\", o.\"to_address\") IS NOT NULL",
+    "final_SQL": "WITH incoming AS (SELECT \"from_address\", SUM(\"value\") AS \"total_incoming\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRACES\" WHERE \"status\" = 1 AND \"from_address\" IS NOT NULL GROUP BY \"from_address\"), outgoing AS (SELECT \"to_address\", SUM(\"value\") AS \"total_outgoing\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRACES\" WHERE \"status\" = 1 AND \"to_address\" IS NOT NULL GROUP BY \"to_address\"), miner_rewards AS (SELECT t.\"from_address\", SUM(t.\"gas_price\" * t.\"receipt_gas_used\") AS \"total_rewards\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRANSACTIONS\" t GROUP BY t.\"from_address\"), gas_fees AS (SELECT t.\"from_address\", SUM(t.\"gas\") AS \"total_gas_fees\" FROM \"ETHEREUM_BLOCKCHAIN\".\"TRANSACTIONS\" t GROUP BY t.\"from_address\") SELECT COALESCE(i.\"from_address\", o.\"to_address\") AS \"address\", COALESCE(i.\"total_incoming\", 0) - COALESCE(o.\"total_outgoing\", 0) + COALESCE(m.\"total_rewards\", 0) - COALESCE(g.\"total_gas_fees\", 0) AS \"net_balance\" FROM incoming i FULL OUTER JOIN outgoing o ON i.\"from_address\" = o.\"to_address\" FULL OUTER JOIN miner_rewards m ON COALESCE(i.\"from_address\", o.\"to_address\") = m.\"from_address\" FULL OUTER JOIN gas_fees g ON COALESCE(i.\"from_address\", o.\"to_address\") = g.\"from_address\" WHERE COALESCE(i.\"from_address\", o.\"to_address\") IS NOT NULL",
+    "Step_counter": 3,
+    "Token_usage": {
+      "input_tokens": 49860,
+      "output_tokens": 6452,
+      "total_tokens": 56312
+    }
+  }
+]

@@ -1,0 +1,40 @@
+[
+  {
+    "instance_id": "sf_bq252",
+    "db": "GITHUB_REPOS",
+    "question": "Could you please find the name of the repository that contains the most copied non-binary Swift file in the dataset, ensuring each file is uniquely identified by its ID?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+        "GITHUB_REPOS.GITHUB_REPOS.LANGUAGES": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": null,
+    "final_SQL": null,
+    "Step_counter": 1,
+    "Token_usage": {
+      "input_tokens": 23466,
+      "output_tokens": 2953,
+      "total_tokens": 26419
+    }
+  }
+]

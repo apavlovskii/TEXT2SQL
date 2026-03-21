@@ -1,0 +1,38 @@
+[
+  {
+    "instance_id": "sf_bq017",
+    "db": "GEO_OPENSTREETMAP",
+    "question": "What are the five longest types of highways within the multipolygon boundary of Denmark (as defined by Wikidata ID 'Q35') by total length, analyzed through planet features?",
+    "external_knowledge": "functions_st_dwithin.md",
+    "evidence": "ST_DWITHIN checks if minimum geodesic distance between two GEOGRAPHY objects is within specified meters. Works for non-point geographies (lines/polygons) using closest points. Syntax: ST_DWITHIN(geo_expr1, geo_expr2, distance_in_meters). Example usage: SELECT ST_DWITHIN(ST_MAKEPOINT(0,0), ST_MAKEPOINT(1,0), 150000);",
+    "table": [
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES",
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_RELATIONS"
+    ],
+    "col": {
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_RELATIONS": []
+    },
+    "sample_history": {
+      "0": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": []
+      },
+      "1": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_RELATIONS": []
+      },
+      "2": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_RELATIONS": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": []
+      }
+    },
+    "temp_SQL": "SELECT DISTINCT \"feature_type\" FROM \"GEO_OPENSTREETMAP\".\"PLANET_FEATURES\" WHERE \"feature_type\" ILIKE '%highway%';",
+    "final_SQL": "SELECT DISTINCT \"feature_type\" FROM \"GEO_OPENSTREETMAP\".\"PLANET_FEATURES\" WHERE \"feature_type\" ILIKE '%highway%';",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 91690,
+      "output_tokens": 14760,
+      "total_tokens": 106450
+    }
+  }
+]

@@ -1,0 +1,38 @@
+[
+  {
+    "instance_id": "sf_bq194",
+    "db": "GITHUB_REPOS",
+    "question": "Among all Python (*.py), R (*.r, *.R, *.Rmd, *.rmd), and IPython notebook (*.ipynb) files in the GitHub sample dataset, which library or module is identified as the second most frequently imported or loaded based on the extracted import statements?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT import_statement, COUNT(*) AS import_count FROM (SELECT TRIM(SUBSTRING(sc.\"content\", POSITION('import ' IN sc.\"content\") + 7)) AS import_statement FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" sc JOIN \"GITHUB_REPOS\".\"SAMPLE_FILES\" sf ON sf.\"id\" = sc.\"id\" WHERE sf.\"path\" ILIKE '%.py' OR sf.\"path\" ILIKE '%.r' OR sf.\"path\" ILIKE '%.R' OR sf.\"path\" ILIKE '%.Rmd' OR sf.\"path\" ILIKE '%.rmd' OR sf.\"path\" ILIKE '%.ipynb') AS subquery GROUP BY import_statement ORDER BY import_count DESC LIMIT 1 OFFSET 1; /* Get the second most frequently imported library/module */",
+    "final_SQL": "SELECT import_statement, COUNT(*) AS import_count FROM (SELECT TRIM(SUBSTRING(sc.\"content\", POSITION('import ' IN sc.\"content\") + 7)) AS import_statement FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" sc JOIN \"GITHUB_REPOS\".\"SAMPLE_FILES\" sf ON sf.\"id\" = sc.\"id\" WHERE sf.\"path\" ILIKE '%.py' OR sf.\"path\" ILIKE '%.r' OR sf.\"path\" ILIKE '%.R' OR sf.\"path\" ILIKE '%.Rmd' OR sf.\"path\" ILIKE '%.rmd' OR sf.\"path\" ILIKE '%.ipynb') AS subquery GROUP BY import_statement ORDER BY import_count DESC LIMIT 1 OFFSET 1; /* Get the second most frequently imported library/module */",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 600382,
+      "output_tokens": 16977,
+      "total_tokens": 617359
+    }
+  }
+]

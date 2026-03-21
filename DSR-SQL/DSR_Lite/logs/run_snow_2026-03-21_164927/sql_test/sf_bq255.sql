@@ -1,0 +1,1 @@
+SELECT DISTINCT l."repo_name" FROM "GITHUB_REPOS"."LANGUAGES" l JOIN "GITHUB_REPOS"."LICENSES" lic ON l."repo_name" = lic."repo_name" WHERE l."language" = 'Shell' AND lic."license" = 'apache-2.0' /* Find repositories using Shell language and apache-2.0 license */

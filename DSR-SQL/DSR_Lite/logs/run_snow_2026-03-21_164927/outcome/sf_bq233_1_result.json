@@ -1,0 +1,38 @@
+[
+  {
+    "instance_id": "sf_bq233",
+    "db": "GITHUB_REPOS",
+    "question": "Can you analyze the joined data from github repos files and github_repos contents, focusing only on files ending with '.py' or '.r', then extract Python modules from 'import' or 'from ... import' lines and R libraries from 'library(...)' lines, count their occurrences, and finally list the results sorted by language and by the number of occurrences in descending order?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT COUNT(CASE WHEN c.\"content\" ILIKE 'library(%' THEN SPLIT_PART(c.\"content\", '(', 1) END) AS \"library_count\", f.\"repo_name\" FROM \"GITHUB_REPOS\".\"SAMPLE_FILES\" f JOIN \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" c ON f.\"id\" = c.\"id\" WHERE f.\"path\" ILIKE '%.r' GROUP BY f.\"repo_name\" ORDER BY \"library_count\" DESC;",
+    "final_SQL": "SELECT COUNT(CASE WHEN c.\"content\" ILIKE 'library(%' THEN SPLIT_PART(c.\"content\", '(', 1) END) AS \"library_count\", f.\"repo_name\" FROM \"GITHUB_REPOS\".\"SAMPLE_FILES\" f JOIN \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" c ON f.\"id\" = c.\"id\" WHERE f.\"path\" ILIKE '%.r' GROUP BY f.\"repo_name\" ORDER BY \"library_count\" DESC;",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 191873,
+      "output_tokens": 21233,
+      "total_tokens": 213106
+    }
+  }
+]

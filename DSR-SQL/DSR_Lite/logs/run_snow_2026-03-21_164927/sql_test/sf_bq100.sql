@@ -1,0 +1,1 @@
+SELECT TRIM(REPLACE(REPLACE(f.value::STRING, 'import ', ''), '(', '')) AS package_name, COUNT(*) AS frequency FROM SAMPLE_CONTENTS, LATERAL FLATTEN(input => SPLIT("content", '\n')) f WHERE f.value IS NOT NULL AND f.value ILIKE '%(%' AND f.value ILIKE '%"%"%' GROUP BY package_name ORDER BY frequency DESC LIMIT 10;

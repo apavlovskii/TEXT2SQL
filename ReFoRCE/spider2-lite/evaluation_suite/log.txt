@@ -1,0 +1,4 @@
+  0%|          | 0/25 [00:00<?, ?it/s]100%|##########| 25/25 [00:00<00:00, 590.29it/s]
+Final score: 0.36, Correct examples: 9, Total examples: 25
+Real score: 0.016453382084095063, Correct examples: 9, Total examples: 547
+TOTAL_GB_PROCESSED:  0.0

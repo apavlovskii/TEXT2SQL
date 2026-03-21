@@ -1,0 +1,15 @@
+{
+  "experiment_dir": "/TEXT2SQL/DSR-SQL/DSR_Lite/logs/run_snow_2026-03-21_164927",
+  "evaluation_mode": "sql",
+  "result_dir": "/TEXT2SQL/DSR-SQL/DSR_Lite/logs/run_snow_2026-03-21_164927/sql",
+  "final_score": 0.0,
+  "final_correct_examples": 0,
+  "final_total_examples": 23,
+  "real_score": 0.0,
+  "real_correct_examples": 0,
+  "real_total_examples": 547,
+  "total_gb_processed": 0.0,
+  "sql_csv_dir": "/TEXT2SQL/DSR-SQL/DSR_Lite/logs/run_snow_2026-03-21_164927/sql_csv",
+  "correct_ids_file": "/TEXT2SQL/DSR-SQL/DSR_Lite/logs/run_snow_2026-03-21_164927/sql-ids.csv",
+  "source_log": "/TEXT2SQL/DSR-SQL/DSR_Lite/spider2-lite/evaluation_suite/log.txt"
+}

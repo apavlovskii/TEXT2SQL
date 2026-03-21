@@ -1,0 +1,1 @@
+SELECT DISTINCT "feature_type" FROM "GEO_OPENSTREETMAP"."PLANET_FEATURES" WHERE "feature_type" ILIKE '%highway%';

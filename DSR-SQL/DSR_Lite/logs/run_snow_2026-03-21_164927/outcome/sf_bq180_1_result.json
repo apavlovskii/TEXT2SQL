@@ -1,0 +1,37 @@
+[
+  {
+    "instance_id": "sf_bq180",
+    "db": "GITHUB_REPOS",
+    "question": "Get the top 5 most frequently used module names from Python (`.py`) and R (`.r`) scripts, counting occurrences of modules in `import` and `from` statements for Python, and `library()` calls for R. The query should consider only Python and R files, group by module name, and return the top 5 modules ordered by frequency.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT module_name, COUNT(*) AS frequency FROM (SELECT TRIM(SUBSTRING(\"content\", POSITION('import ' IN \"content\") + 7, POSITION(' ' IN SUBSTRING(\"content\", POSITION('import ' IN \"content\") + 7) || ' ') - 1)) AS module_name FROM \"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.py' AND POSITION('import ' IN \"content\") > 0 UNION ALL SELECT TRIM(SUBSTRING(\"content\", POSITION('from ' IN \"content\") + 5, POSITION(' ' IN SUBSTRING(\"content\", POSITION('from ' IN \"content\") + 5) || ' ') - 1)) AS module_name FROM \"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.py' AND POSITION('from ' IN \"content\") > 0 UNION ALL SELECT TRIM(SUBSTRING(\"content\", POSITION('library(' IN \"content\") + 8, POSITION(')' IN SUBSTRING(\"content\", POSITION('library(' IN \"content\") + 8) || ')') - 1)) AS module_name FROM \"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.r' AND POSITION('library(' IN \"content\") > 0) AS modules GROUP BY module_name ORDER BY frequency DESC LIMIT 5 /* Extracting top 5 module names from Python and R scripts */",
+    "final_SQL": "SELECT module_name, COUNT(*) AS frequency FROM (SELECT TRIM(SUBSTRING(\"content\", POSITION('import ' IN \"content\") + 7, POSITION(' ' IN SUBSTRING(\"content\", POSITION('import ' IN \"content\") + 7) || ' ') - 1)) AS module_name FROM \"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.py' AND POSITION('import ' IN \"content\") > 0 UNION ALL SELECT TRIM(SUBSTRING(\"content\", POSITION('from ' IN \"content\") + 5, POSITION(' ' IN SUBSTRING(\"content\", POSITION('from ' IN \"content\") + 5) || ' ') - 1)) AS module_name FROM \"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.py' AND POSITION('from ' IN \"content\") > 0 UNION ALL SELECT TRIM(SUBSTRING(\"content\", POSITION('library(' IN \"content\") + 8, POSITION(')' IN SUBSTRING(\"content\", POSITION('library(' IN \"content\") + 8) || ')') - 1)) AS module_name FROM \"SAMPLE_CONTENTS\" WHERE \"sample_path\" ILIKE '%.r' AND POSITION('library(' IN \"content\") > 0) AS modules GROUP BY module_name ORDER BY frequency DESC LIMIT 5 /* Extracting top 5 module names from Python and R scripts */",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 132681,
+      "output_tokens": 16098,
+      "total_tokens": 148779
+    }
+  }
+]

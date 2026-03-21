@@ -1,0 +1,35 @@
+[
+  {
+    "instance_id": "sf035",
+    "db": "BRAZE_USER_EVENT_DEMO_DATASET",
+    "question": "How many unique users started sessions each day within each app group between June 1, 2023, and June 7, 2023? Also show the app group ID and the start day of the session.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "BRAZE_USER_EVENT_DEMO_DATASET.PUBLIC.USERS_BEHAVIORS_APP_FIRSTSESSION_VIEW",
+      "BRAZE_USER_EVENT_DEMO_DATASET.PUBLIC.USERS_BEHAVIORS_APP_SESSIONSTART_VIEW"
+    ],
+    "col": {
+      "BRAZE_USER_EVENT_DEMO_DATASET.PUBLIC.USERS_BEHAVIORS_APP_FIRSTSESSION_VIEW": [],
+      "BRAZE_USER_EVENT_DEMO_DATASET.PUBLIC.USERS_BEHAVIORS_APP_SESSIONSTART_VIEW": []
+    },
+    "sample_history": {
+      "0": {
+        "BRAZE_USER_EVENT_DEMO_DATASET.PUBLIC.USERS_BEHAVIORS_APP_SESSIONSTART_VIEW": [],
+        "BRAZE_USER_EVENT_DEMO_DATASET.PUBLIC.USERS_BEHAVIORS_APP_FIRSTSESSION_VIEW": []
+      },
+      "1": {
+        "BRAZE_USER_EVENT_DEMO_DATASET.PUBLIC.USERS_BEHAVIORS_APP_SESSIONSTART_VIEW": []
+      },
+      "2": {}
+    },
+    "temp_SQL": "SELECT \"APP_GROUP_ID\", DATE_TRUNC('day', \"SF_CREATED_AT\") AS \"start_day\", COUNT(DISTINCT \"USER_ID\") AS \"unique_users\" FROM \"USERS_BEHAVIORS_APP_SESSIONSTART_VIEW\" WHERE \"SF_CREATED_AT\" >= '2023-05-25' AND \"SF_CREATED_AT\" < '2023-06-10' GROUP BY \"APP_GROUP_ID\", DATE_TRUNC('day', \"SF_CREATED_AT\") ORDER BY \"start_day\", \"APP_GROUP_ID\";",
+    "final_SQL": "SELECT \"APP_GROUP_ID\", DATE_TRUNC('day', \"SF_CREATED_AT\") AS \"start_day\", COUNT(DISTINCT \"USER_ID\") AS \"unique_users\" FROM \"USERS_BEHAVIORS_APP_SESSIONSTART_VIEW\" WHERE \"SF_CREATED_AT\" >= '2023-05-25' AND \"SF_CREATED_AT\" < '2023-06-10' GROUP BY \"APP_GROUP_ID\", DATE_TRUNC('day', \"SF_CREATED_AT\") ORDER BY \"start_day\", \"APP_GROUP_ID\";",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 97935,
+      "output_tokens": 12614,
+      "total_tokens": 110549
+    }
+  }
+]

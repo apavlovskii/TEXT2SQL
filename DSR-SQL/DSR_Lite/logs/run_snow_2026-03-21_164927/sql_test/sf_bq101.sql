@@ -1,0 +1,1 @@
+SELECT package_name, COUNT(*) AS package_count FROM (SELECT REGEXP_SUBSTR(line.value, 'import\s+([\w\.\*]+)') AS package_name FROM (SELECT SPLIT("content", '\n') AS lines FROM "SAMPLE_CONTENTS"), LATERAL FLATTEN(input => lines) AS line WHERE line.value ILIKE 'import%') WHERE package_name IS NOT NULL GROUP BY package_name ORDER BY package_count DESC LIMIT 10;

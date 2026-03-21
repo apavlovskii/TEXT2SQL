@@ -1,0 +1,1 @@
+SELECT t."from_address", t."value", t."block_timestamp" FROM "ETHEREUM_BLOCKCHAIN"."TRANSACTIONS" t WHERE t."block_timestamp" < 1483228800 LIMIT 10 /* Retrieve a sample of transactions before 2017-01-01 */

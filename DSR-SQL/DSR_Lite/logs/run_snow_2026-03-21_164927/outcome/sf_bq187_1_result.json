@@ -1,0 +1,39 @@
+[
+  {
+    "instance_id": "sf_bq187",
+    "db": "ETHEREUM_BLOCKCHAIN",
+    "question": "Calculate the total circulating supply of 'BNB' tokens (in units divided by 10^18) by summing balances of all non-zero addresses, where each address’s balance equals its total received BNB minus sent BNB. Exclude transactions involving the zero address (0x000...) for both senders and receivers.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKENS",
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKEN_TRANSFERS"
+    ],
+    "col": {
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKENS": [],
+      "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKEN_TRANSFERS": []
+    },
+    "sample_history": {
+      "0": {
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKENS": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKEN_TRANSFERS": []
+      },
+      "1": {
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKENS": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKEN_TRANSFERS": []
+      },
+      "2": {
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKENS": [],
+        "ETHEREUM_BLOCKCHAIN.ETHEREUM_BLOCKCHAIN.TOKEN_TRANSFERS": []
+      }
+    },
+    "temp_SQL": "SELECT SUM(balance / POWER(10, 18)) AS total_circulating_supply FROM (SELECT (received.total_received - COALESCE(sent.total_sent, 0)) AS balance FROM (SELECT \"to_address\", SUM(CAST(\"value\" AS FLOAT)) AS total_received FROM \"TOKEN_TRANSFERS\" WHERE \"to_address\" != '0x000...' GROUP BY \"to_address\") AS received LEFT JOIN (SELECT \"from_address\", SUM(CAST(\"value\" AS FLOAT)) AS total_sent FROM \"TOKEN_TRANSFERS\" WHERE \"from_address\" != '0x000...' GROUP BY \"from_address\") AS sent ON received.\"to_address\" = sent.\"from_address\");",
+    "final_SQL": "SELECT SUM(balance / POWER(10, 18)) AS total_circulating_supply FROM (SELECT (received.total_received - COALESCE(sent.total_sent, 0)) AS balance FROM (SELECT \"to_address\", SUM(CAST(\"value\" AS FLOAT)) AS total_received FROM \"TOKEN_TRANSFERS\" WHERE \"to_address\" != '0x000...' GROUP BY \"to_address\") AS received LEFT JOIN (SELECT \"from_address\", SUM(CAST(\"value\" AS FLOAT)) AS total_sent FROM \"TOKEN_TRANSFERS\" WHERE \"from_address\" != '0x000...' GROUP BY \"from_address\") AS sent ON received.\"to_address\" = sent.\"from_address\");",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 190237,
+      "output_tokens": 21883,
+      "total_tokens": 212120
+    }
+  }
+]

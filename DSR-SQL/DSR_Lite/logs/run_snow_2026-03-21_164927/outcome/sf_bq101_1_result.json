@@ -1,0 +1,34 @@
+[
+  {
+    "instance_id": "sf_bq101",
+    "db": "GITHUB_REPOS",
+    "question": "From GitHub Repos contents, how can we identify the top 10 most frequently imported package names in Java source files by splitting each file's content into lines, filtering for valid import statements, extracting only the package portion using a suitable regex, grouping by these extracted package names, counting their occurrences, and finally returning the 10 packages that appear most often in descending order of frequency?",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT package_name, COUNT(*) AS package_count FROM (SELECT REGEXP_SUBSTR(line.value, 'import\\s+([\\w\\.\\*]+)') AS package_name FROM (SELECT SPLIT(\"content\", '\\n') AS lines FROM \"SAMPLE_CONTENTS\"), LATERAL FLATTEN(input => lines) AS line WHERE line.value ILIKE 'import%') WHERE package_name IS NOT NULL GROUP BY package_name ORDER BY package_count DESC LIMIT 10;",
+    "final_SQL": "SELECT package_name, COUNT(*) AS package_count FROM (SELECT REGEXP_SUBSTR(line.value, 'import\\s+([\\w\\.\\*]+)') AS package_name FROM (SELECT SPLIT(\"content\", '\\n') AS lines FROM \"SAMPLE_CONTENTS\"), LATERAL FLATTEN(input => lines) AS line WHERE line.value ILIKE 'import%') WHERE package_name IS NOT NULL GROUP BY package_name ORDER BY package_count DESC LIMIT 10;",
+    "Step_counter": 20,
+    "Token_usage": {
+      "input_tokens": 113798,
+      "output_tokens": 12725,
+      "total_tokens": 126523
+    }
+  }
+]

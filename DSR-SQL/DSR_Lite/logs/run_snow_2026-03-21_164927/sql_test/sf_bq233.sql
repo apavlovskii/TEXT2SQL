@@ -1,0 +1,1 @@
+SELECT COUNT(CASE WHEN c."content" ILIKE 'library(%' THEN SPLIT_PART(c."content", '(', 1) END) AS "library_count", f."repo_name" FROM "GITHUB_REPOS"."SAMPLE_FILES" f JOIN "GITHUB_REPOS"."SAMPLE_CONTENTS" c ON f."id" = c."id" WHERE f."path" ILIKE '%.r' GROUP BY f."repo_name" ORDER BY "library_count" DESC;

@@ -1,0 +1,34 @@
+[
+  {
+    "instance_id": "sf_bq249",
+    "db": "GITHUB_REPOS",
+    "question": "Please provide a report on the number of occurrences of specific line types across files from the GitHub repository. Categorize a line as 'trailing' if it ends with a blank character, as 'Space' if it starts with a space, and as 'Other' if it meets neither condition. The report should include the total number of occurrences for each category, considering all lines across all files.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      }
+    },
+    "temp_SQL": "SELECT \"line_type\", \"occurrences\" FROM (SELECT CASE WHEN \"content\" ILIKE '% ' THEN 'trailing' WHEN \"content\" ILIKE ' %' THEN 'Space' ELSE 'Other' END AS \"line_type\", COUNT(*) AS \"occurrences\" FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" GROUP BY \"line_type\") AS subquery ORDER BY \"line_type\";",
+    "final_SQL": "SELECT \"line_type\", \"occurrences\" FROM (SELECT CASE WHEN \"content\" ILIKE '% ' THEN 'trailing' WHEN \"content\" ILIKE ' %' THEN 'Space' ELSE 'Other' END AS \"line_type\", COUNT(*) AS \"occurrences\" FROM \"GITHUB_REPOS\".\"SAMPLE_CONTENTS\" GROUP BY \"line_type\") AS subquery ORDER BY \"line_type\";",
+    "Step_counter": 14,
+    "Token_usage": {
+      "input_tokens": 62186,
+      "output_tokens": 8929,
+      "total_tokens": 71115
+    }
+  }
+]

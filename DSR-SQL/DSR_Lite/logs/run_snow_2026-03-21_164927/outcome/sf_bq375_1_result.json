@@ -1,0 +1,37 @@
+[
+  {
+    "instance_id": "sf_bq375",
+    "db": "GITHUB_REPOS",
+    "question": "Determine which file type among Python (.py), C (.c), Jupyter Notebook (.ipynb), Java (.java), and JavaScript (.js) in the GitHub codebase has the most files with a directory depth greater than 10, and provide the file count.",
+    "external_knowledge": null,
+    "evidence": "",
+    "table": [
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS",
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES"
+    ],
+    "col": {
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": [],
+      "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+    },
+    "sample_history": {
+      "0": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": [],
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_CONTENTS": []
+      },
+      "1": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+      },
+      "2": {
+        "GITHUB_REPOS.GITHUB_REPOS.SAMPLE_FILES": []
+      }
+    },
+    "temp_SQL": "SELECT \"file_type\", \"file_count\" FROM (SELECT CASE WHEN \"path\" ILIKE '%.py' THEN 'Python' WHEN \"path\" ILIKE '%.c' THEN 'C' WHEN \"path\" ILIKE '%.ipynb' THEN 'Jupyter Notebook' WHEN \"path\" ILIKE '%.java' THEN 'Java' WHEN \"path\" ILIKE '%.js' THEN 'JavaScript' END AS \"file_type\", COUNT(*) AS \"file_count\" FROM \"GITHUB_REPOS\".\"SAMPLE_FILES\" WHERE LENGTH(\"path\") - LENGTH(REPLACE(\"path\", '/', '')) > 10 AND (\"path\" ILIKE '%.py' OR \"path\" ILIKE '%.c' OR \"path\" ILIKE '%.ipynb' OR \"path\" ILIKE '%.java' OR \"path\" ILIKE '%.js') GROUP BY \"file_type\") AS counts ORDER BY \"file_count\" DESC LIMIT 1;",
+    "final_SQL": "SELECT \"file_type\", \"file_count\" FROM (SELECT CASE WHEN \"path\" ILIKE '%.py' THEN 'Python' WHEN \"path\" ILIKE '%.c' THEN 'C' WHEN \"path\" ILIKE '%.ipynb' THEN 'Jupyter Notebook' WHEN \"path\" ILIKE '%.java' THEN 'Java' WHEN \"path\" ILIKE '%.js' THEN 'JavaScript' END AS \"file_type\", COUNT(*) AS \"file_count\" FROM \"GITHUB_REPOS\".\"SAMPLE_FILES\" WHERE LENGTH(\"path\") - LENGTH(REPLACE(\"path\", '/', '')) > 10 AND (\"path\" ILIKE '%.py' OR \"path\" ILIKE '%.c' OR \"path\" ILIKE '%.ipynb' OR \"path\" ILIKE '%.java' OR \"path\" ILIKE '%.js') GROUP BY \"file_type\") AS counts ORDER BY \"file_count\" DESC LIMIT 1;",
+    "Step_counter": 6,
+    "Token_usage": {
+      "input_tokens": 30166,
+      "output_tokens": 5878,
+      "total_tokens": 36044
+    }
+  }
+]

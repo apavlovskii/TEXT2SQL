@@ -1,0 +1,23 @@
+{
+    "DeepSeek-AI":{
+        "url": "https://api.deepseek.com/v1",
+        "key":"sk-9b55bf7113784f00a0fea9b833d872d9",
+        "Describe":"⚠️ Please delete the current file, assuming you're handing over the codebase!"
+    },
+    "Modelscope":{
+        "url": "https://api-inference.modelscope.cn/v1",
+        "key":"ms-123456789",
+        "Describe":"Free"
+    },
+    "VLLM":{
+        "url": "http://localhost:8000/v1",
+        "key":"DSR-SQL",
+        "Describe":"Please use the port you configured!"
+    },
+    "GPT":{
+        "url": "https://api.openai.com/v1",
+        "key":"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",
+        "model":"gpt-4o",
+        "Describe":"OpenAI API (GPT) configured via OPENAI_API_KEY"
+    }
+}

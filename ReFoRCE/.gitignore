@@ -1,0 +1,25 @@
+# credentials
+**/snowflake_credential.json
+**/bigquery_credential.json
+
+# DB
+spider2-lite/resource/databases/spider2-localdb
+data/BIRD/dev_databases
+spider2-lite/resource/local_sqlite.zip
+
+# output log
+spider2-snow/evaluation_suite/log.txt
+
+# example_folder
+methods/ReFoRCE/examples*
+
+# cache
+**/__pycache__
+
+# output folder
+methods/ReFoRCE/output/
+
+# vscode
+.vscode/
+
+venv/

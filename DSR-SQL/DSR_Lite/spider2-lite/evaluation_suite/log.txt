@@ -1,0 +1,7 @@
+Evaluating SQL:   0%|          | 0/23 [00:00<?, ?it/s]Evaluating SQL: 100%|##########| 23/23 [00:00<00:00, 323721.45it/s]
+{'sf018': 0, 'sf035': 0, 'sf_bq012': 0, 'sf_bq017': 0, 'sf_bq036': 0, 'sf_bq100': 0, 'sf_bq101': 0, 'sf_bq131': 0, 'sf_bq180': 0, 'sf_bq187': 0, 'sf_bq193': 0, 'sf_bq194': 0, 'sf_bq225': 0, 'sf_bq233': 0, 'sf_bq248': 0, 'sf_bq249': 0, 'sf_bq252': 0, 'sf_bq255': 0, 'sf_bq349': 0, 'sf_bq359': 0, 'sf_bq375': 0, 'sf_bq377': 0, 'sf_bq450': 0}
+Final score: 0.0, Correct examples: 0, Total examples: 23
+Real score: 0.0, Correct examples: 0, Total examples: 547
+Execution results saved to: /home/raskin/TEXT2SQL/DSR-SQL/DSR_Lite/logs/run_snow_2026-03-21_164927/sql_csv
+Correct IDs saved to: /home/raskin/TEXT2SQL/DSR-SQL/DSR_Lite/logs/run_snow_2026-03-21_164927/sql-ids.csv
+TOTAL_GB_PROCESSED: 0.00000 GB

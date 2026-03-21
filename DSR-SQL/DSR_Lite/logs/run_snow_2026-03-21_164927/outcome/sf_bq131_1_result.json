@@ -1,0 +1,42 @@
+[
+  {
+    "instance_id": "sf_bq131",
+    "db": "GEO_OPENSTREETMAP",
+    "question": "What is the number of bus stops for the bus network with the most stops within the multipolygon boundary of Denmark (as defined by Wikidata ID 'Q35'), analyzed through planet features?",
+    "external_knowledge": "functions_st_dwithin.md",
+    "evidence": "ST_DWITHIN returns TRUE if the minimum geodesic distance between two GEOGRAPHY objects is within specified meters. For non-point objects (e.g., multipolygons), it uses the closest points. Use ST_DWITHIN(geography1, geography2, 0) to check point-in-polygon containment by verifying zero distance between stop points and Denmark's multipolygon.",
+    "table": [
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES",
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES_POINTS",
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_RELATIONS"
+    ],
+    "col": {
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES_POINTS": [],
+      "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_RELATIONS": []
+    },
+    "sample_history": {
+      "0": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES_POINTS": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_RELATIONS": []
+      },
+      "1": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES_POINTS": []
+      },
+      "2": {
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES": [],
+        "GEO_OPENSTREETMAP.GEO_OPENSTREETMAP.PLANET_FEATURES_POINTS": []
+      }
+    },
+    "temp_SQL": null,
+    "final_SQL": null,
+    "Step_counter": 1,
+    "Token_usage": {
+      "input_tokens": 25722,
+      "output_tokens": 5328,
+      "total_tokens": 31050
+    }
+  }
+]

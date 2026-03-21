@@ -1,0 +1,1 @@
+SELECT CAST(COUNT(DISTINCT f."repo_name") AS FLOAT) / COUNT(*) AS "proportion" FROM "GITHUB_REPOS"."SAMPLE_FILES" f JOIN "GITHUB_REPOS"."SAMPLE_CONTENTS" c ON f."id" = c."id" WHERE f."path" ILIKE '%readme.md%' AND c."content" ILIKE '%Copyright (c)%';

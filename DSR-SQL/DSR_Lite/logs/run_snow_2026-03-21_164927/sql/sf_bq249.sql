@@ -1,0 +1,1 @@
+SELECT "line_type", "occurrences" FROM (SELECT CASE WHEN "content" ILIKE '% ' THEN 'trailing' WHEN "content" ILIKE ' %' THEN 'Space' ELSE 'Other' END AS "line_type", COUNT(*) AS "occurrences" FROM "GITHUB_REPOS"."SAMPLE_CONTENTS" GROUP BY "line_type") AS subquery ORDER BY "line_type";
