@@ -1,0 +1,10 @@
+{
+  "attempted_cases": 25,
+  "finished_cases": 7,
+  "failed_cases": 18,
+  "accuracy": 0.28,
+  "llm_calls": 450,
+  "prompt_tokens": 7149916,
+  "completion_tokens": 71457,
+  "total_tokens": 7221373
+}

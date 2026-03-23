@@ -73,6 +73,10 @@ Notes:
   - total token usage (prompt/completion/total)
 - Token summary JSON is written to:
   - `Spider2/methods/spider-agent-snow/output/<experiment_id>/token_usage_summary.json`
+- SQL generation failure analysis report (example):
+  - `Spider2/methods/spider-agent-snow/output/gpt-4o-test2/SQL_Generation_Failure_Report.md`
+- Cross-check comparison report (`gpt-4o` vs `gpt-4o-mini`):
+  - `Spider2/methods/spider-agent-snow/output/Cross_Check_4o_vs_4o-mini.md`
 
 ## 4) Build Submission Files
 Convert run output to evaluation submission format:

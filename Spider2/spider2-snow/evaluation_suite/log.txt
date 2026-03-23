@@ -1,6 +1,10 @@
-Applying --N=25: evaluating first 25 matched testcase(s).
-Evaluating Exec Results:   0%|          | 0/25 [00:00<?, ?it/s]Evaluating Exec Results:  56%|#####6    | 14/25 [00:00<00:00, 136.15it/s]Evaluating Exec Results: 100%|##########| 25/25 [00:04<00:00,  5.80it/s] 
-{'sf_bq011': 1, 'sf_bq009': 0, 'sf_bq003': 0, 'sf_bq001': 0, 'sf_bq008': 0, 'sf_bq002': 0, 'sf_bq210': 0, 'sf_bq004': 0, 'sf_bq209': 0, 'sf_bq211': 1, 'sf_bq091': 0, 'sf_bq010': 0, 'sf_bq029': 0, 'sf_bq033': 0, 'sf_bq214': 0, 'sf_bq374': 0, 'sf_bq026': 0, 'sf_bq275': 0, 'sf_bq268': 0, 'sf_bq270': 0, 'sf_bq269': 0, 'sf_bq099': 0, 'sf_bq213': 1, 'sf_bq212': 0, 'sf_bq027': 0}
-Final score: 0.12, Correct examples: 3, Total examples: 25
-Real score: 0.12, Correct examples: 3, Total examples: 25
-Correct IDs saved to: gpt-4o-test2.csv
+Traceback (most recent call last):
+  File "/home/raskin/TEXT2SQL/Spider2/spider2-snow/evaluation_suite/evaluate.py", line 511, in <module>
+    evaluate_spider2sql(args, temp_path)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/home/raskin/TEXT2SQL/Spider2/spider2-snow/evaluation_suite/evaluate.py", line 394, in evaluate_spider2sql
+    eval_standard_dict = load_jsonl_to_dict(os.path.join(args.gold_dir, "spider2snow_eval.jsonl"))
+  File "/home/raskin/TEXT2SQL/Spider2/spider2-snow/evaluation_suite/evaluate.py", line 59, in load_jsonl_to_dict
+    with open(jsonl_file, 'r') as file:
+         ~~~~^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'gold/spider2snow_eval.jsonl'

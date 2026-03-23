@@ -23,10 +23,8 @@ methods/spider-agent-dbt/examples/*
 !methods/spider-agent-dbt/output/README.md
 
 methods/spider-agent-snow/logs/*
-methods/spider-agent-snow/output/*
 methods/spider-agent-snow/examples/*
 !methods/spider-agent-snow/logs/README.md
-!methods/spider-agent-snow/output/README.md
 
 spider2-lite/evaluation_suite/*
 spider2-lite/fix_rows.py
