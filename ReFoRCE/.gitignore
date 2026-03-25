@@ -17,7 +17,8 @@ methods/ReFoRCE/examples*
 **/__pycache__
 
 # output folder
-methods/ReFoRCE/output/
+methods/ReFoRCE/output/*
+!methods/ReFoRCE/output/ReFoRCE_Accuracy_Report.md
 
 # vscode
 .vscode/
