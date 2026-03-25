@@ -66,6 +66,9 @@ Under each run folder:
 Example:
 - `DSR-SQL/DSR_Lite/logs/run_snow_2026-03-20_123456/`
 
+Generated test summary report (example from a completed run):
+- `DSR-SQL/DSR_Lite/logs/run_snow_2026-03-21_164927/DSR_Lite_Accuracy_Token_Error_Report.md`
+
 ## 6) Useful Notes
 - `--N` limits the number of instances from the input JSON.
 - `--max_attempts_per_case K` skips a testcase after `K` failed attempts and moves to the next one.

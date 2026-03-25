@@ -80,6 +80,8 @@ Flags explained (common):
 ## 5. Logs & outputs
 - Run logs and outputs are written under `methods/ReFoRCE/output/` with run-specific folders.
 - Token summary: `.../token_usage_summary.json` — contains prompt/completion/total tokens per test/candidate.
+- Test summary report (generated):
+  - `ReFoRCE/methods/ReFoRCE/output/ReFoRCE_Accuracy_Report.md`
 
 
 ## 6. What changed from the original pipeline
@@ -138,6 +140,7 @@ Latest retained experiment artifacts (current workspace):
 - `methods/ReFoRCE/output/gpt-5-mini-lite-csv-20260320-005805/`
 - `methods/ReFoRCE/output/gpt-5-mini-lite-csv-20260320-005805-ids.csv`
 - `methods/ReFoRCE/output/gpt-5-mini-lite-sql-20260320-005805/`
+- `methods/ReFoRCE/output/ReFoRCE_Accuracy_Report.md`
 
 Notes:
 - `run_main.sh` populates `$OUTPUT_PATH` and calls `run.py` multiple times (different flags). Each run may append candidate files and logs into the same `$OUTPUT_PATH` so you will find artifacts from all stages there.
