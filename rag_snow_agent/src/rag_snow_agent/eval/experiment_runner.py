@@ -146,6 +146,65 @@ def load_instances(split_jsonl: Path, limit: int | None = None) -> list[dict]:
     return instances
 
 
+def preflight_check(credentials_path: str, model: str | None = None) -> None:
+    """Verify Snowflake and OpenAI connectivity before starting the run.
+
+    Exits with code 1 if either check fails.
+    """
+    import os
+
+    print("=" * 50)
+    print("Preflight connectivity checks")
+    print("=" * 50)
+
+    # --- Snowflake ---
+    print("\n[1/2] Snowflake connectivity... ", end="", flush=True)
+    try:
+        from ..snowflake.client import connect
+
+        conn = connect(credentials_path)
+        cur = conn.cursor()
+        cur.execute("SELECT CURRENT_VERSION()")
+        version = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        print(f"OK (version {version})")
+    except Exception as exc:
+        print(f"FAILED")
+        print(f"  Error: {exc}", file=sys.stderr)
+        print("\nFix: check snowflake_credentials.json and network access.", file=sys.stderr)
+        sys.exit(1)
+
+    # --- OpenAI ---
+    print("[2/2] OpenAI API connectivity... ", end="", flush=True)
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        print("FAILED")
+        print("  Error: OPENAI_API_KEY environment variable is not set.", file=sys.stderr)
+        print("\nFix: export OPENAI_API_KEY=sk-...", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key)
+        test_model = model or "gpt-4o-mini"
+        response = client.chat.completions.create(
+            model=test_model,
+            messages=[{"role": "user", "content": "Reply with only the word OK"}],
+            max_tokens=5,
+        )
+        reply = response.choices[0].message.content.strip()
+        print(f"OK (model={test_model}, reply={reply!r})")
+    except Exception as exc:
+        print(f"FAILED")
+        print(f"  Error: {exc}", file=sys.stderr)
+        print("\nFix: check OPENAI_API_KEY and API quota.", file=sys.stderr)
+        sys.exit(1)
+
+    print("\nAll preflight checks passed.\n")
+
+
 def run_experiment(args: argparse.Namespace) -> Path:
     """Orchestrate a full experiment run. Returns the experiment directory."""
     # Validate split_jsonl
@@ -167,6 +226,13 @@ def run_experiment(args: argparse.Namespace) -> Path:
     # Create experiment directory
     experiment_dir = DEFAULT_REPORTS_DIR / args.experiment
     experiment_dir.mkdir(parents=True, exist_ok=True)
+
+    # Preflight connectivity checks
+    if not args.skip_preflight:
+        preflight_check(
+            credentials_path=args.credentials,
+            model=config.get("llm", {}).get("model"),
+        )
 
     # Write manifest
     write_manifest(experiment_dir, config, args)
@@ -193,17 +259,34 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 # Import here to avoid circular imports and to allow
                 # the runner to work even without full dependencies in tests
                 from ..agent.agent import solve_instance
-                from ..retrieval.schema_slice import SchemaSlice
+                from ..chroma.chroma_store import ChromaStore
+                from ..retrieval.debug_retrieve import build_schema_slice
+                from ..retrieval.hybrid_retriever import HybridRetriever
                 from ..snowflake.executor import SnowflakeExecutor
 
                 # Create executor
+                sf_cfg = config.get("snowflake", {})
                 executor = SnowflakeExecutor(
                     credentials_path=args.credentials,
+                    db_id=db_id,
+                    statement_timeout_sec=sf_cfg.get("statement_timeout_sec", 120),
+                    sample_rows=config.get("agent", {}).get("sample_rows", 20),
                 )
 
-                # Retrieve schema slice (placeholder -- real implementation
-                # would build index and retrieve)
-                schema_slice = SchemaSlice(db_id=db_id)
+                # Retrieve schema slice via ChromaDB
+                ret_cfg = config.get("retrieval", {})
+                store = ChromaStore(persist_dir=args.chroma_dir)
+                collection = store.schema_collection()
+                retriever = HybridRetriever(collection)
+
+                schema_slice, _, _ = build_schema_slice(
+                    retriever=retriever,
+                    query=instruction,
+                    db_id=db_id,
+                    top_k_tables=ret_cfg.get("top_k_tables", 8),
+                    top_k_columns=ret_cfg.get("top_k_columns", 25),
+                    max_schema_tokens=ret_cfg.get("max_schema_tokens", 2500),
+                )
 
                 # Determine solve parameters from config
                 agent_cfg = config.get("agent", {})
@@ -222,7 +305,19 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     best_of_n=bon,
                     max_repairs=max_repairs,
                     memory_enabled=memory_enabled,
+                    chroma_dir=args.chroma_dir,
                 )
+
+                # Write Spider2 result.json
+                from ..eval.write_results import write_spider2_result
+                write_spider2_result(
+                    experiment=args.experiment,
+                    instance_id=instance_id,
+                    sql=result.final_sql,
+                    success=result.success,
+                )
+
+                executor.close()
 
                 record = {
                     "instance_id": instance_id,
@@ -235,6 +330,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     "best_of_n_used": result.best_of_n_used,
                     "error_message": result.error_message,
                     "error_type": None,
+                    "selection_reason": result.selection_reason,
                 }
                 if result.success:
                     successes += 1
@@ -282,6 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None, help="LLM model override")
     parser.add_argument("--best_of_n", type=int, default=None, help="Best-of-N count")
     parser.add_argument("--ablation_preset", default=None, help="Path to ablation preset YAML")
+    parser.add_argument("--chroma_dir", default=None, help="ChromaDB persistence directory")
 
     # Ablation toggles
     parser.add_argument("--disable_memory", action="store_true")
@@ -290,6 +387,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable_repair", action="store_true")
     parser.add_argument("--disable_verification", action="store_true")
     parser.add_argument("--disable_join_graph", action="store_true")
+    parser.add_argument("--skip_preflight", action="store_true", help="Skip Snowflake/OpenAI connectivity checks")
     return parser
 
 
