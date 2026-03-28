@@ -5,7 +5,7 @@ from pathlib import Path
 
 import chromadb
 
-from .chroma_store import DEFAULT_CHROMA_DIR
+from .chroma_store import DEFAULT_CHROMA_DIR, _get_embedding_function
 
 log = logging.getLogger(__name__)
 
@@ -17,12 +17,16 @@ class TraceMemoryStore:
         self.persist_dir = Path(persist_dir) if persist_dir else DEFAULT_CHROMA_DIR
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         self.client = chromadb.PersistentClient(path=str(self.persist_dir))
+        self._embedding_fn = _get_embedding_function()
 
     def collection(self):
-        return self.client.get_or_create_collection(
-            name=TRACE_COLLECTION,
-            metadata={"hnsw:space": "cosine"},
-        )
+        kwargs: dict = {
+            "name": TRACE_COLLECTION,
+            "metadata": {"hnsw:space": "cosine"},
+        }
+        if self._embedding_fn is not None:
+            kwargs["embedding_function"] = self._embedding_fn
+        return self.client.get_or_create_collection(**kwargs)
 
     def upsert_trace(self, trace_record: dict) -> None:
         col = self.collection()

@@ -149,9 +149,20 @@ def load_instances(split_jsonl: Path, limit: int | None = None) -> list[dict]:
 def preflight_check(credentials_path: str, model: str | None = None) -> None:
     """Verify Snowflake and OpenAI connectivity before starting the run.
 
+    Loads .env / .env.example if OPENAI_API_KEY is not already set.
     Exits with code 1 if either check fails.
     """
     import os
+
+    from dotenv import load_dotenv
+
+    # Load env vars from .env or .env.example if not already set
+    if not os.environ.get("OPENAI_API_KEY"):
+        for env_file in [".env", ".env.example"]:
+            env_path = Path(env_file)
+            if env_path.exists():
+                load_dotenv(env_path, override=False)
+                break
 
     print("=" * 50)
     print("Preflight connectivity checks")
@@ -254,6 +265,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
             db_id = instance.get("db_id", "")
 
             log.info("[%d/%d] Processing %s", i, len(instances), instance_id)
+            t_start = time.monotonic()
 
             try:
                 # Import here to avoid circular imports and to allow
@@ -354,6 +366,22 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 errors += 1
 
             results_file.write(json.dumps(record) + "\n")
+            results_file.flush()
+
+            # Progress bar
+            t_elapsed = time.monotonic() - t_start
+            total = len(instances)
+            pct = 100 * i / total
+            bar_len = 30
+            filled = int(bar_len * i / total)
+            bar = "█" * filled + "░" * (bar_len - filled)
+            status = "✓" if record.get("success") else "✗"
+            print(
+                f"\r  [{bar}] {i}/{total} ({pct:.0f}%) "
+                f"| {status} {instance_id} ({t_elapsed:.1f}s) "
+                f"| ok={successes} fail={failures} err={errors}",
+                flush=True,
+            )
 
     # Summary
     total = len(instances)

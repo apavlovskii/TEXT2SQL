@@ -28,6 +28,7 @@ Detailed setup, credential, execution, output, and evaluation instructions are d
 - `README_DSRLITE.md` — detailed instructions for setting up and running `DSR-SQL / DSR_Lite`
 - `README_REFORCE.md` — detailed instructions for setting up and running `ReFoRCE`
 - `README_SPIDER2.md` — detailed instructions for setting up and running `Spider2 / spider-agent-snow`
+- `README_RAG_SNOW_AGENT.md` — detailed instructions for setting up and running `rag_snow_agent` (SnowRAG-Agent)
 
 Use those files when you want the exact commands, environment setup steps, output locations, and run-specific notes for each benchmark.
 
@@ -35,3 +36,7 @@ Use those files when you want the exact commands, environment setup steps, outpu
 For experiment setup and execution as well as current result review for DSR-SQL, ReFoRCE and SPIDER2 review README_DSRLITE.md, README_REFORCE.md and README_SPIDER2.md.
 
 Cross-project comparison report (DSR vs ReFoRCE vs Spider+GPT-4o): `Cross_Project_Comparison_DSR_ReFoRCE_Spider4o.md`
+
+## Benchmark Results
+
+Benchmark run definitions and detailed results reports are stored in `docs/benchmarks/`.
