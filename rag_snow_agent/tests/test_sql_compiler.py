@@ -67,7 +67,7 @@ def test_compile_has_join():
     plan = _two_table_plan()
     sql = compile_plan(plan)
     assert "INNER JOIN" in sql
-    assert "t1.CUSTOMER_ID = t2.CUSTOMER_ID" in sql
+    assert 't1."CUSTOMER_ID" = t2."CUSTOMER_ID"' in sql
 
 
 def test_compile_has_where():
@@ -87,8 +87,8 @@ def test_compile_has_group_by():
 def test_compile_has_aggregations():
     plan = _two_table_plan()
     sql = compile_plan(plan)
-    assert "SUM(t1.AMOUNT)" in sql
-    assert "COUNT(t1.ORDER_ID)" in sql
+    assert 'SUM(t1."AMOUNT")' in sql
+    assert 'COUNT(t1."ORDER_ID")' in sql
     assert "total_amount" in sql
     assert "order_count" in sql
 
@@ -125,7 +125,7 @@ def test_compile_count_distinct():
         ],
     )
     sql = compile_plan(plan)
-    assert "COUNT(DISTINCT t1.USER_ID)" in sql
+    assert 'COUNT(DISTINCT t1."USER_ID")' in sql
 
 
 def test_compile_deterministic():

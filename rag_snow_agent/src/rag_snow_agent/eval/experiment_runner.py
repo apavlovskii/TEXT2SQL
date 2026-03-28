@@ -93,11 +93,13 @@ def apply_cli_toggles(config: dict, args: argparse.Namespace) -> dict:
         features["join_graph"] = False
         config.setdefault("retrieval", {})["connectivity_mode"] = "heuristic"
 
-    # CLI overrides for model / best_of_n
+    # CLI overrides for model / best_of_n / max_repairs
     if args.model:
         config.setdefault("llm", {})["model"] = args.model
     if args.best_of_n is not None and not args.disable_best_of_n:
         config.setdefault("agent", {})["best_of_n"] = args.best_of_n
+    if args.max_repairs is not None:
+        config.setdefault("agent", {})["max_repairs"] = args.max_repairs
 
     return config
 
@@ -146,74 +148,151 @@ def load_instances(split_jsonl: Path, limit: int | None = None) -> list[dict]:
     return instances
 
 
-def preflight_check(credentials_path: str, model: str | None = None) -> None:
-    """Verify Snowflake and OpenAI connectivity before starting the run.
+def preflight_check(
+    credentials_path: str,
+    model: str | None = None,
+    chroma_dir: str | None = None,
+    db_ids: list[str] | None = None,
+) -> None:
+    """Verify Snowflake, OpenAI, and ChromaDB connectivity before starting.
 
-    Loads .env / .env.example if OPENAI_API_KEY is not already set.
-    Exits with code 1 if either check fails.
+    Loads .env (primary) or .env.example (fallback) for environment variables.
+    Prints a full connectivity report.  Exits with code 1 on any failure.
     """
     import os
 
     from dotenv import load_dotenv
 
-    # Load env vars from .env or .env.example if not already set
-    if not os.environ.get("OPENAI_API_KEY"):
-        for env_file in [".env", ".env.example"]:
-            env_path = Path(env_file)
-            if env_path.exists():
-                load_dotenv(env_path, override=False)
-                break
+    # Load env vars from .env (primary) or .env.example (fallback)
+    for env_file in [".env", ".env.example"]:
+        env_path = Path(env_file)
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            break
 
-    print("=" * 50)
-    print("Preflight connectivity checks")
-    print("=" * 50)
+    passed = 0
+    total = 3
+    print("=" * 60)
+    print("  PREFLIGHT SMOKE TEST")
+    print("=" * 60)
 
-    # --- Snowflake ---
-    print("\n[1/2] Snowflake connectivity... ", end="", flush=True)
+    # --- 1. Snowflake ---
+    print("\n[1/3] Snowflake connectivity... ", end="", flush=True)
     try:
         from ..snowflake.client import connect
 
         conn = connect(credentials_path)
         cur = conn.cursor()
-        cur.execute("SELECT CURRENT_VERSION()")
-        version = cur.fetchone()[0]
+        cur.execute("SELECT CURRENT_VERSION(), CURRENT_ACCOUNT(), CURRENT_USER()")
+        row = cur.fetchone()
+        sf_version, sf_account, sf_user = row[0], row[1], row[2]
         cur.close()
         conn.close()
-        print(f"OK (version {version})")
+        print(f"OK")
+        print(f"       Version:  {sf_version}")
+        print(f"       Account:  {sf_account}")
+        print(f"       User:     {sf_user}")
+        passed += 1
     except Exception as exc:
         print(f"FAILED")
-        print(f"  Error: {exc}", file=sys.stderr)
-        print("\nFix: check snowflake_credentials.json and network access.", file=sys.stderr)
-        sys.exit(1)
+        print(f"       Error: {exc}", file=sys.stderr)
+        print(f"       Fix: check snowflake_credentials.json and network access.", file=sys.stderr)
 
-    # --- OpenAI ---
-    print("[2/2] OpenAI API connectivity... ", end="", flush=True)
+    # --- 2. OpenAI API ---
+    print("\n[2/3] OpenAI API connectivity... ", end="", flush=True)
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         print("FAILED")
-        print("  Error: OPENAI_API_KEY environment variable is not set.", file=sys.stderr)
-        print("\nFix: export OPENAI_API_KEY=sk-...", file=sys.stderr)
-        sys.exit(1)
+        print(f"       Error: OPENAI_API_KEY environment variable is not set.", file=sys.stderr)
+        print(f"       Fix: export OPENAI_API_KEY=sk-... or add to .env.example", file=sys.stderr)
+    else:
+        try:
+            from ..agent.llm_client import call_llm
 
+            test_model = model or "gpt-4o-mini"
+            reply = call_llm(
+                messages=[{"role": "user", "content": "Reply with only the word OK"}],
+                model=test_model,
+                max_tokens=10,
+            )
+            print(f"OK")
+            print(f"       Model:   {test_model}")
+            print(f"       Reply:   {reply!r}")
+            passed += 1
+        except Exception as exc:
+            print(f"FAILED")
+            print(f"       Error: {exc}", file=sys.stderr)
+            print(f"       Fix: check OPENAI_API_KEY and API quota.", file=sys.stderr)
+
+    # --- 3. ChromaDB ---
+    print("\n[3/3] ChromaDB index... ", end="", flush=True)
     try:
-        from openai import OpenAI
+        from ..chroma.chroma_store import ChromaStore
 
-        client = OpenAI(api_key=api_key)
-        test_model = model or "gpt-4o-mini"
-        response = client.chat.completions.create(
-            model=test_model,
-            messages=[{"role": "user", "content": "Reply with only the word OK"}],
-            max_tokens=5,
-        )
-        reply = response.choices[0].message.content.strip()
-        print(f"OK (model={test_model}, reply={reply!r})")
+        store = ChromaStore(persist_dir=chroma_dir)
+        col = store.schema_collection()
+        total_items = col.count()
+
+        if total_items == 0:
+            print(f"WARNING (collection empty)")
+            print(f"       The schema_cards collection has 0 items.")
+            print(f"       Fix: run build_index for required databases first.")
+        else:
+            # Count items per db_id
+            all_meta = col.get(include=["metadatas"])
+            metas = all_meta.get("metadatas") or []
+            from collections import Counter
+            db_counts: Counter = Counter()
+            type_counts: Counter = Counter()
+            for m in metas:
+                db_counts[m.get("db_id", "?")] += 1
+                type_counts[m.get("object_type", "?")] += 1
+
+            print(f"OK ({total_items:,} items)")
+            print(f"       Cards:   {', '.join(f'{t}={c}' for t, c in sorted(type_counts.items()))}")
+            print(f"       DBs:     {', '.join(f'{db}({c})' for db, c in sorted(db_counts.items()))}")
+
+            # Verify required db_ids are indexed
+            if db_ids:
+                missing = [d for d in db_ids if d not in db_counts]
+                if missing:
+                    print(f"       WARNING: missing indexes for: {', '.join(missing)}")
+                    print(f"       Fix: run build_index for those databases.")
+                else:
+                    print(f"       All required DBs indexed: {', '.join(db_ids)}")
+
+            # Quick search test
+            test_results = col.query(
+                query_texts=["revenue by month"],
+                n_results=1,
+                include=["metadatas"],
+            )
+            if test_results["ids"] and test_results["ids"][0]:
+                hit_id = test_results["ids"][0][0]
+                print(f"       Search:  OK (test query returned: {hit_id[:60]})")
+            else:
+                print(f"       Search:  WARNING (test query returned no results)")
+
+            passed += 1
     except Exception as exc:
         print(f"FAILED")
-        print(f"  Error: {exc}", file=sys.stderr)
-        print("\nFix: check OPENAI_API_KEY and API quota.", file=sys.stderr)
+        print(f"       Error: {exc}", file=sys.stderr)
+        print(f"       Fix: check .chroma/ directory and run build_index.", file=sys.stderr)
+
+    # --- Summary ---
+    print()
+    print("-" * 60)
+    if passed == total:
+        print(f"  RESULT: ALL {total} CHECKS PASSED")
+    else:
+        print(f"  RESULT: {passed}/{total} CHECKS PASSED, {total - passed} FAILED")
+    print("-" * 60)
+
+    if passed < total:
+        print("\nAborting: fix the failures above before running the benchmark.\n")
         sys.exit(1)
 
-    print("\nAll preflight checks passed.\n")
+    print()
 
 
 def run_experiment(args: argparse.Namespace) -> Path:
@@ -238,19 +317,22 @@ def run_experiment(args: argparse.Namespace) -> Path:
     experiment_dir = DEFAULT_REPORTS_DIR / args.experiment
     experiment_dir.mkdir(parents=True, exist_ok=True)
 
+    # Load instances (before preflight so we can check db_ids)
+    instances = load_instances(split_path, args.limit)
+    log.info("Loaded %d instances from %s", len(instances), split_path)
+
     # Preflight connectivity checks
     if not args.skip_preflight:
+        required_dbs = sorted(set(inst.get("db_id", "") for inst in instances if inst.get("db_id")))
         preflight_check(
             credentials_path=args.credentials,
             model=config.get("llm", {}).get("model"),
+            chroma_dir=args.chroma_dir,
+            db_ids=required_dbs,
         )
 
     # Write manifest
     write_manifest(experiment_dir, config, args)
-
-    # Load instances
-    instances = load_instances(split_path, args.limit)
-    log.info("Loaded %d instances from %s", len(instances), split_path)
 
     # Run instances
     results_path = experiment_dir / "instance_results.jsonl"
@@ -302,10 +384,12 @@ def run_experiment(args: argparse.Namespace) -> Path:
 
                 # Determine solve parameters from config
                 agent_cfg = config.get("agent", {})
+                llm_cfg = config.get("llm", {})
                 bon = agent_cfg.get("best_of_n", 1)
                 max_repairs = agent_cfg.get("max_repairs", 2)
                 memory_enabled = config.get("memory", {}).get("enabled", True)
-                model = config.get("llm", {}).get("model", "gpt-4o-mini")
+                model = llm_cfg.get("model", "gpt-4o-mini")
+                max_tokens = llm_cfg.get("max_output_tokens", 4096)
 
                 result = solve_instance(
                     instance_id=instance_id,
@@ -316,6 +400,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     executor=executor,
                     best_of_n=bon,
                     max_repairs=max_repairs,
+                    max_tokens=max_tokens,
                     memory_enabled=memory_enabled,
                     chroma_dir=args.chroma_dir,
                 )
@@ -405,6 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None, help="Max instances to process")
     parser.add_argument("--model", default=None, help="LLM model override")
     parser.add_argument("--best_of_n", type=int, default=None, help="Best-of-N count")
+    parser.add_argument("--max_repairs", type=int, default=None, help="Max repair iterations per candidate")
     parser.add_argument("--ablation_preset", default=None, help="Path to ablation preset YAML")
     parser.add_argument("--chroma_dir", default=None, help="ChromaDB persistence directory")
 

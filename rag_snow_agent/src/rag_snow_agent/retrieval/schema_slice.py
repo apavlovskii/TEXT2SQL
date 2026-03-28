@@ -20,10 +20,12 @@ class ColumnSlice:
     name: str  # just the column name (e.g. ORDER_ID)
     data_type: str
     comment: str | None = None
+    original_name: str | None = None  # exact case from Snowflake (e.g. "fullVisitorId")
     token_estimate: int = 0
     fused_rank: int = 0  # 1-based rank from retrieval (lower = better)
     is_join_key: bool = False
     is_time_column: bool = False
+    is_variant: bool = False
 
 
 @dataclass
@@ -62,7 +64,10 @@ class SchemaSlice:
                 header += f"  -- {ts.comment}"
             lines.append(header)
             for col in ts.columns:
-                parts = [f"  {col.name} {col.data_type}"]
+                dtype_display = col.data_type
+                if col.is_variant:
+                    dtype_display += " (VARIANT — use :field path)"
+                parts = [f"  {col.name} {dtype_display}"]
                 if col.comment:
                     parts.append(f"-- {col.comment}")
                 lines.append(" ".join(parts))

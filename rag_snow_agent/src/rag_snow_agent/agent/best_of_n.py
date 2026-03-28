@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 
+from ..chroma.chroma_store import ChromaStore
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import SnowflakeExecutor
 from .candidate_generator import CandidateItem, generate_candidate_sqls
@@ -78,6 +79,7 @@ def run_best_of_n(
     enable_fingerprinting: bool = True,
     enable_metamorphic: bool = True,
     max_metamorphic_checks: int = 2,
+    chroma_store: ChromaStore | None = None,
 ) -> dict:
     """Generate N candidates, execute+repair, verify, select the best."""
     log.info(
@@ -140,6 +142,7 @@ def run_best_of_n(
             max_repairs=max_repairs,
             explain_first=explain_first,
             stop_on_repeated_error=stop_on_repeated_error,
+            chroma_store=chroma_store,
         )
 
         cr = _candidate_to_result(candidate, final_sql, trace, exec_result)

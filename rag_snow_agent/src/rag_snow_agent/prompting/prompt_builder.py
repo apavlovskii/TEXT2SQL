@@ -22,8 +22,11 @@ Snowflake SQL rules:
 - Prefer CTEs (WITH ... AS) over nested subqueries.
 - Do NOT use LIMIT without ORDER BY.
 - QUALIFY is supported for window-function filtering.
-- Use FLATTEN for semi-structured (VARIANT/ARRAY) data.
-- Avoid double-quoting identifiers unless they contain special characters.\
+- ALWAYS double-quote column names to preserve case: "fullVisitorId", "trafficSource", "publication_number".
+- For VARIANT/ARRAY columns, use LATERAL FLATTEN:
+  SELECT f.value:"field"::STRING FROM table, LATERAL FLATTEN(input => table."variant_col") f
+- Access VARIANT nested fields with colon: "col":"field"::TYPE
+- Snowflake treats unquoted identifiers as UPPERCASE — always quote mixed-case or lowercase columns.\
 """
 
 # ── Plan prompt ─────────────────────────────────────────────────────────────
@@ -134,11 +137,15 @@ def build_memory_context(
     parts = [header]
     budget = max_memory_tokens - len(_mem_enc.encode(header)) - 10  # footer margin
     for t in traces:
-        doc = t.get("document", "")
+        # Extract SQL if available from the document
+        doc_text = t.get("document", "")
         tables = t.get("metadata", {}).get("tables_used", "")
-        entry = f"- [{t.get('trace_id', '')}] {doc}"
+        sql_preview = t.get("metadata", {}).get("sql_preview", "")
+        entry = f"- [{t.get('trace_id', '')}] {doc_text}"
         if tables:
             entry += f" | tables: {tables}"
+        if sql_preview:
+            entry += f" | sql: {sql_preview[:120]}"
         entry += "\n"
         entry_tokens = len(_mem_enc.encode(entry))
         if entry_tokens > budget:

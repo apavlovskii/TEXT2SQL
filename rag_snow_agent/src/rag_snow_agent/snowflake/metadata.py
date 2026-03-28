@@ -175,6 +175,148 @@ def extract_join_edges(
     return combined
 
 
+_VARIANT_TYPES = {"VARIANT", "OBJECT", "ARRAY"}
+
+
+def _deduplicate_tables_for_sampling(
+    tables: list[TableInfo],
+) -> dict[str, TableInfo]:
+    """Pick one representative table per (schema, column-signature) group.
+
+    GA360 has hundreds of daily partition tables (GA_SESSIONS_20170101 …
+    GA_SESSIONS_20170801) that share the same schema.  We only need to sample
+    one of them to discover VARIANT sub-fields.
+    """
+    seen: dict[str, TableInfo] = {}  # key = schema + sorted column names
+    for t in tables:
+        variant_cols = sorted(
+            c.column_name for c in t.columns if c.data_type.upper() in _VARIANT_TYPES
+        )
+        if not variant_cols:
+            continue
+        sig = f"{t.table_schema}||{'|'.join(variant_cols)}"
+        if sig not in seen:
+            seen[sig] = t
+    return seen
+
+
+def extract_variant_subfields(
+    conn: "snowflake.connector.SnowflakeConnection",
+    db_id: str,
+    tables: list[TableInfo],
+) -> list[ColumnInfo]:
+    """Discover nested keys inside VARIANT / OBJECT / ARRAY columns.
+
+    For each VARIANT/OBJECT column, samples 1 row and uses ``OBJECT_KEYS()``
+    to find top-level keys.  For ARRAY columns, uses ``LATERAL FLATTEN`` +
+    ``OBJECT_KEYS()`` on one element.
+
+    Returns ColumnInfo entries with ``column_name`` set to the access-path
+    (e.g. ``"trafficSource":source``) and ``data_type`` = ``VARIANT_FIELD``.
+    Only goes 1 level deep.
+    """
+    result: list[ColumnInfo] = []
+    representative = _deduplicate_tables_for_sampling(tables)
+
+    if not representative:
+        return result
+
+    cur = conn.cursor()
+    try:
+        cur.execute(f"USE DATABASE {db_id}")
+
+        for _sig, table in representative.items():
+            try:
+                _extract_for_table(cur, db_id, table, result)
+            except Exception:
+                log.debug(
+                    "Variant sampling failed for %s — skipping",
+                    table.qualified_name,
+                    exc_info=True,
+                )
+    finally:
+        cur.close()
+
+    log.info("Discovered %d VARIANT sub-fields across %d representative tables",
+             len(result), len(representative))
+    return result
+
+
+def _extract_for_table(
+    cur,
+    db_id: str,
+    table: TableInfo,
+    result: list[ColumnInfo],
+) -> None:
+    """Extract VARIANT sub-fields for one table (called per representative)."""
+    fqn = f"{db_id}.{table.table_schema}.{table.table_name}"
+    ordinal = 1000  # offset so they don't collide with real ordinals
+
+    for col in table.columns:
+        dtype = col.data_type.upper()
+        if dtype not in _VARIANT_TYPES:
+            continue
+
+        quoted_col = f'"{col.column_name}"'
+
+        if dtype in ("VARIANT", "OBJECT"):
+            sql = (
+                f"SELECT OBJECT_KEYS({quoted_col}) AS keys "
+                f"FROM {fqn} "
+                f"WHERE {quoted_col} IS NOT NULL "
+                f"LIMIT 1"
+            )
+            try:
+                cur.execute(sql)
+                row = cur.fetchone()
+                if row and row[0]:
+                    import json
+                    keys = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                    for key in keys:
+                        result.append(ColumnInfo(
+                            table_catalog=table.table_catalog,
+                            table_schema=table.table_schema,
+                            table_name=table.table_name,
+                            column_name=f'{quoted_col}:{key}',
+                            data_type="VARIANT_FIELD",
+                            ordinal_position=ordinal,
+                            is_nullable="YES",
+                            comment=f"Sub-field of {col.column_name} ({dtype})",
+                        ))
+                        ordinal += 1
+            except Exception:
+                log.debug("OBJECT_KEYS failed for %s.%s", fqn, col.column_name, exc_info=True)
+
+        elif dtype == "ARRAY":
+            sql = (
+                f"SELECT OBJECT_KEYS(f.value) AS keys "
+                f"FROM {fqn}, "
+                f"LATERAL FLATTEN(input => {quoted_col}) f "
+                f"WHERE {quoted_col} IS NOT NULL "
+                f"LIMIT 1"
+            )
+            try:
+                cur.execute(sql)
+                row = cur.fetchone()
+                if row and row[0]:
+                    import json
+                    keys = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                    for key in keys:
+                        result.append(ColumnInfo(
+                            table_catalog=table.table_catalog,
+                            table_schema=table.table_schema,
+                            table_name=table.table_name,
+                            column_name=f'{quoted_col}:{key}',
+                            data_type="VARIANT_FIELD",
+                            ordinal_position=ordinal,
+                            is_nullable="YES",
+                            comment=f"Sub-field of {col.column_name} ({dtype} element)",
+                        ))
+                        ordinal += 1
+            except Exception:
+                log.debug("FLATTEN+OBJECT_KEYS failed for %s.%s", fqn, col.column_name, exc_info=True)
+
+
 def extract_tables(
     conn: snowflake.connector.SnowflakeConnection,
     db_id: str,

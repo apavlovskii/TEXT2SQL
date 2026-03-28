@@ -1,8 +1,21 @@
 """Tests for TraceMemoryStore: upsert/query round trip with temp ChromaDB."""
 
 import tempfile
+from unittest.mock import patch
+
+import pytest
 
 from rag_snow_agent.chroma.trace_memory import TraceMemoryStore
+
+
+@pytest.fixture(autouse=True)
+def _no_openai_embeddings():
+    """Disable OpenAI embeddings in all tests in this module."""
+    with patch(
+        "rag_snow_agent.chroma.trace_memory._get_embedding_function",
+        return_value=None,
+    ):
+        yield
 
 
 def _make_store(tmp_path):

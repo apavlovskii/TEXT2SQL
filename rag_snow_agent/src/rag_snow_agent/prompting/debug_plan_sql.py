@@ -95,6 +95,7 @@ def main(argv: list[str] | None = None) -> None:
         plan_retry_limit=agent_cfg.get("plan_retry_limit", 1),
         validation_fix_limit=agent_cfg.get("validation_fix_limit", 1),
         use_llm_sql=args.use_llm_sql,
+        retriever=retriever,
     )
 
     print(f"\n--- Plan JSON ---")

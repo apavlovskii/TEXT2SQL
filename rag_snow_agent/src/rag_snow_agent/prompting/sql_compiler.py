@@ -11,10 +11,42 @@ def _alias(idx: int) -> str:
     return f"t{idx + 1}"
 
 
-def _resolve_column(table: str, column: str, alias_map: dict[str, str]) -> str:
-    """Return alias.COLUMN reference."""
+def _build_column_case_map(
+    schema_slice: SchemaSlice | None,
+) -> dict[str, dict[str, str]]:
+    """Return {table_qname: {UPPER_COL: original_col}} from the SchemaSlice.
+
+    Used to restore exact column casing when generating SQL.
+    """
+    if schema_slice is None:
+        return {}
+    case_map: dict[str, dict[str, str]] = {}
+    for ts in schema_slice.tables:
+        col_map: dict[str, str] = {}
+        for col in ts.columns:
+            original = col.original_name if col.original_name else col.name
+            col_map[col.name.upper()] = original
+        case_map[ts.qualified_name] = col_map
+    return case_map
+
+
+def _resolve_column(
+    table: str,
+    column: str,
+    alias_map: dict[str, str],
+    case_map: dict[str, dict[str, str]] | None = None,
+) -> str:
+    """Return alias."COLUMN" reference with double-quoted column name.
+
+    If *case_map* is provided, uses the original casing from the SchemaSlice.
+    """
     alias = alias_map.get(table, table)
-    return f"{alias}.{column}"
+    # Resolve original casing if available
+    col_name = column
+    if case_map and table in case_map:
+        col_name = case_map[table].get(column.upper(), column)
+    # Double-quote column to preserve case (Snowflake treats unquoted as uppercase)
+    return f'{alias}."{col_name}"'
 
 
 def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> str:
@@ -30,6 +62,9 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
     for i, tname in enumerate(plan.selected_tables):
         alias_map[tname] = _alias(i)
 
+    # Build column case map from SchemaSlice (for original casing)
+    case_map = _build_column_case_map(schema_slice)
+
     # ── FROM / JOIN clause ──────────────────────────────────────────────
     primary = plan.selected_tables[0]
     from_parts = [f"{primary} AS {alias_map[primary]}"]
@@ -37,8 +72,8 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
     for j in plan.joins:
         jtype = j.join_type.upper()
         right_alias = alias_map.get(j.right_table, j.right_table)
-        left_ref = _resolve_column(j.left_table, j.left_column, alias_map)
-        right_ref = _resolve_column(j.right_table, j.right_column, alias_map)
+        left_ref = _resolve_column(j.left_table, j.left_column, alias_map, case_map)
+        right_ref = _resolve_column(j.right_table, j.right_column, alias_map, case_map)
         from_parts.append(
             f"{jtype} JOIN {j.right_table} AS {right_alias} "
             f"ON {left_ref} = {right_ref}"
@@ -62,7 +97,7 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
 
     # Aggregations
     for agg in plan.aggregations:
-        col_ref = _resolve_column(agg.table, agg.column, alias_map)
+        col_ref = _resolve_column(agg.table, agg.column, alias_map, case_map)
         if agg.func.upper() == "COUNT_DISTINCT":
             expr = f"COUNT(DISTINCT {col_ref})"
         elif agg.func.upper() == "COUNT" and agg.column == "*":
@@ -80,7 +115,7 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
     # ── WHERE clause ────────────────────────────────────────────────────
     where_parts: list[str] = []
     for f in plan.filters:
-        col_ref = _resolve_column(f.table, f.column, alias_map)
+        col_ref = _resolve_column(f.table, f.column, alias_map, case_map)
         op = f.op.upper()
         if op in ("IS NULL", "IS NOT NULL"):
             where_parts.append(f"{col_ref} {op}")
@@ -105,11 +140,13 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
             resolved = _try_resolve(parts[0], parts[1], alias_map)
             group_parts.append(resolved)
         else:
+            # Bare name (no dot) — likely an alias, don't double-quote
             group_parts.append(gb)
 
     group_clause = ", ".join(group_parts) if group_parts else ""
 
     # ── ORDER BY clause ─────────────────────────────────────────────────
+    # ORDER BY expressions are aliases or positional — do NOT double-quote
     order_parts: list[str] = []
     for ob in plan.order_by:
         direction = ob.direction.upper()
@@ -134,9 +171,9 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
 def _try_resolve(table_part: str, col_part: str, alias_map: dict[str, str]) -> str:
     """Resolve table_part.col_part using alias_map, trying exact then suffix match."""
     if table_part in alias_map:
-        return f"{alias_map[table_part]}.{col_part}"
+        return f'{alias_map[table_part]}."{col_part}"'
     # Try suffix match (e.g. "ORDERS" matching "DB.SCHEMA.ORDERS")
     for full_name, alias in alias_map.items():
         if full_name.endswith(f".{table_part}") or full_name == table_part:
-            return f"{alias}.{col_part}"
-    return f"{table_part}.{col_part}"
+            return f'{alias}."{col_part}"'
+    return f'{table_part}."{col_part}"'

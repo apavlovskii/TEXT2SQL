@@ -210,3 +210,17 @@ __marimo__/
 **/snowflake_credentials.json
 **/*.env
 **/.env
+
+# Architecture notes generated during iterations
+docs/architecture/milestone*.md
+
+# Local ChromaDB persistence
+.chroma*
+
+# Spider-agent-snow benchmark outputs
+spider-agent-snow/output/
+**/spider-agent-snow/output/
+
+# Evaluation gold SQL files
+**/evaluation_suite/gold/sql/
+**/evaluation_suite/gold/sql/*.sql

@@ -29,9 +29,12 @@ def _fake_tables() -> list[TableInfo]:
     ]
 
 
+@patch("rag_snow_agent.chroma.chroma_store._get_embedding_function", return_value=None)
+@patch("rag_snow_agent.chroma.build_index.extract_variant_subfields", return_value=[])
+@patch("rag_snow_agent.chroma.build_index.extract_join_edges", return_value=[])
 @patch("rag_snow_agent.chroma.build_index.connect")
 @patch("rag_snow_agent.chroma.build_index.extract_tables")
-def test_smoke_build_index(mock_extract, mock_connect):
+def test_smoke_build_index(mock_extract, mock_connect, mock_joins, mock_variants, mock_embed):
     """Index one db_id with mocked Snowflake data and verify card counts."""
     mock_connect.return_value = MagicMock()
     mock_extract.return_value = _fake_tables()

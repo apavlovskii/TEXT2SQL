@@ -5,8 +5,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from ..chroma.chroma_store import ChromaStore
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import ExecutionResult, SnowflakeExecutor
+from ..snowflake.probes import probe_column_exists
+from .column_validator import validate_columns_against_index
 from .error_classifier import (
     AGGREGATION_ERROR,
     INVALID_IDENTIFIER,
@@ -26,7 +29,7 @@ _SF_RULES = (
     "Snowflake dialect. SQL only. No markdown. No explanation. "
     "Use only identifiers from the schema provided. "
     "Prefer CTEs. Use DATE_TRUNC for date grouping. "
-    "Avoid double-quoting identifiers."
+    'ALWAYS double-quote column names: "colName". Use LATERAL FLATTEN for VARIANT arrays.'
 )
 
 
@@ -104,6 +107,35 @@ def _build_aggregation_repair_prompt(
     return _build_repair_prompt(instruction, previous_sql, error_message, schema_text, extra)
 
 
+def _build_column_validation_repair_prompt(
+    instruction: str,
+    sql: str,
+    errors: list[str],
+    suggestions: list[str],
+    schema_text: str,
+) -> list[dict[str, str]]:
+    """Build a targeted repair prompt for column validation failures."""
+    system = (
+        "You fix broken Snowflake SQL queries. "
+        "Return ONLY the corrected SQL. No markdown, no explanation.\n"
+        f"{_SF_RULES}"
+    )
+    error_block = "\n".join(errors[:10])
+    suggestion_block = "\n".join(suggestions[:10]) if suggestions else "No suggestions available."
+    user = (
+        f"Schema:\n{schema_text}\n\n"
+        f"Question: {instruction}\n\n"
+        f"SQL:\n{sql}\n\n"
+        f"Invalid column references:\n{error_block}\n\n"
+        f"Suggested replacements:\n{suggestion_block}\n\n"
+        "Fix only the invalid column references. Return SQL only."
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
 def _strip_sql_fences(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -133,6 +165,48 @@ def expand_schema_slice_for_error(
     return schema_slice
 
 
+def _run_column_probes(
+    executor: SnowflakeExecutor,
+    errors: list[str],
+    suggestions: list[str],
+    schema_slice: SchemaSlice,
+    max_probes: int = 2,
+) -> None:
+    """Run micro-probes for columns flagged as invalid, enriching error/suggestion lists.
+
+    Modifies *errors* and *suggestions* in place. Runs at most *max_probes* probes.
+    """
+    import re as _re
+
+    probes_run = 0
+    # Extract column names from error messages like "Column 'FOO' not found..."
+    col_pattern = _re.compile(r"Column '(\w+)' not found")
+    for i, err in enumerate(list(errors)):
+        if probes_run >= max_probes:
+            break
+        m = col_pattern.search(err)
+        if not m:
+            continue
+        col_name = m.group(1)
+        # Try probing against each table in the schema slice
+        confirmed_missing = True
+        for ts in schema_slice.tables:
+            probes_run += 1
+            if probe_column_exists(executor, ts.qualified_name, col_name):
+                confirmed_missing = False
+                log.debug(
+                    "Probe confirmed column %s exists in %s",
+                    col_name, ts.qualified_name,
+                )
+                break
+            if probes_run >= max_probes:
+                break
+
+        if confirmed_missing:
+            errors[i] = f"{err} (confirmed missing by live probe)"
+            log.debug("Probe confirmed column %s is missing", col_name)
+
+
 @dataclass
 class RepairTraceItem:
     attempt: int
@@ -155,6 +229,7 @@ def refine_sql(
     max_repairs: int = 2,
     explain_first: bool = True,
     stop_on_repeated_error: bool = True,
+    chroma_store: ChromaStore | None = None,
 ) -> tuple[str, list[RepairTraceItem], ExecutionResult | None]:
     """Run EXPLAIN → execute → repair loop.
 
@@ -166,6 +241,44 @@ def refine_sql(
     last_result: ExecutionResult | None = None
 
     schema_text = schema_slice.format_for_prompt()
+
+    # ── Pre-execution column validation ──────────────────────────────
+    if chroma_store is not None:
+        try:
+            is_valid, errors, suggestions = validate_columns_against_index(
+                current_sql, db_id, chroma_store
+            )
+            if not is_valid:
+                log.info(
+                    "Column validation found %d issue(s); attempting pre-repair",
+                    len(errors),
+                )
+                # ── Micro-probe to double-check invalid columns ──────
+                _run_column_probes(
+                    executor, errors, suggestions, schema_slice, max_probes=2,
+                )
+                repair_prompt = _build_column_validation_repair_prompt(
+                    instruction, current_sql, errors, suggestions, schema_text,
+                )
+                raw = call_llm(
+                    repair_prompt, model=model,
+                    temperature=temperature, max_tokens=max_tokens,
+                )
+                repaired = _strip_sql_fences(raw)
+                trace.append(RepairTraceItem(
+                    attempt=0,
+                    input_sql=current_sql,
+                    error_type="column_validation",
+                    error_message="; ".join(errors[:5]),
+                    repair_action="pre_validate_columns",
+                    output_sql=repaired,
+                ))
+                current_sql = repaired
+        except Exception:
+            log.debug("Column validation failed; proceeding without it", exc_info=True)
+
+    # Track error type frequency for early termination on hopeless repairs
+    error_type_counts: dict[str, int] = {}
 
     for attempt in range(1 + max_repairs):
         # ── EXPLAIN phase ────────────────────────────────────────────
@@ -184,6 +297,16 @@ def refine_sql(
                     last_result = explain_result
                     break
 
+                # Early termination: same error TYPE seen 3+ times
+                error_type_counts[error_type] = error_type_counts.get(error_type, 0) + 1
+                if error_type_counts.get(error_type, 0) >= 3:
+                    log.info(
+                        "Error type '%s' occurred %d times, stopping repair loop",
+                        error_type, error_type_counts[error_type],
+                    )
+                    last_result = explain_result
+                    break
+
                 last_error = error_msg
 
                 if attempt >= max_repairs:
@@ -193,6 +316,7 @@ def refine_sql(
                 repaired = _attempt_repair(
                     instruction, current_sql, error_msg, error_type,
                     schema_text, schema_slice, model, temperature, max_tokens,
+                    chroma_store=chroma_store,
                 )
                 trace.append(RepairTraceItem(
                     attempt=attempt + 1,
@@ -224,6 +348,15 @@ def refine_sql(
             log.info("Repeated error, stopping repair loop")
             break
 
+        # Early termination: same error TYPE seen 3+ times
+        error_type_counts[error_type] = error_type_counts.get(error_type, 0) + 1
+        if error_type_counts.get(error_type, 0) >= 3:
+            log.info(
+                "Error type '%s' occurred %d times, stopping repair loop",
+                error_type, error_type_counts[error_type],
+            )
+            break
+
         last_error = error_msg
 
         if attempt >= max_repairs:
@@ -232,6 +365,7 @@ def refine_sql(
         repaired = _attempt_repair(
             instruction, current_sql, error_msg, error_type,
             schema_text, schema_slice, model, temperature, max_tokens,
+            chroma_store=chroma_store,
         )
         trace.append(RepairTraceItem(
             attempt=attempt + 1,
@@ -255,6 +389,28 @@ def _action_for_type(error_type: str) -> str:
     }.get(error_type, "general_repair")
 
 
+def _get_syntax_guidance(error_msg: str, sql: str, chroma_store: ChromaStore | None) -> str:
+    """Query snowflake_syntax collection for relevant guidance."""
+    if chroma_store is None:
+        return ""
+    try:
+        from ..chroma.snowflake_syntax import SnowflakeSyntaxStore
+
+        syntax_store = SnowflakeSyntaxStore(chroma_store)
+        # Build query from error context
+        query = f"{error_msg[:100]} {sql[:100]}"
+        results = syntax_store.query(query, top_k=2)
+        if not results:
+            return ""
+        snippets = []
+        for r in results:
+            content = r.get("content", "")[:300]
+            snippets.append(content)
+        return "\nSnowflake syntax reference:\n" + "\n---\n".join(snippets)
+    except Exception:
+        return ""
+
+
 def _attempt_repair(
     instruction: str,
     current_sql: str,
@@ -265,6 +421,7 @@ def _attempt_repair(
     model: str,
     temperature: float,
     max_tokens: int,
+    chroma_store: ChromaStore | None = None,
 ) -> str:
     """Dispatch to error-specific repair strategy and return fixed SQL."""
     if error_type == INVALID_IDENTIFIER:
@@ -288,6 +445,12 @@ def _attempt_repair(
         messages = _build_repair_prompt(
             instruction, current_sql, error_msg, schema_text
         )
+
+    # Append syntax reference guidance from ChromaDB if available
+    syntax_guidance = _get_syntax_guidance(error_msg, current_sql, chroma_store)
+    if syntax_guidance:
+        # Append to the system message's content
+        messages[0]["content"] += syntax_guidance
 
     raw = call_llm(messages, model=model, temperature=temperature, max_tokens=max_tokens)
     return _strip_sql_fences(raw)

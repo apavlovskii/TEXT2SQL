@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from ..chroma.chroma_store import ChromaStore
 from ..chroma.trace_memory import TraceMemoryStore
+from ..retrieval.hybrid_retriever import HybridRetriever
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import SnowflakeExecutor
 from .best_of_n import run_best_of_n
@@ -83,6 +85,7 @@ def solve_instance(
     selector_scoring: dict | None = None,
     chroma_dir: str | None = None,
     memory_enabled: bool = True,
+    chroma_store: ChromaStore | None = None,
 ) -> InstanceResult:
     """Solve one instance.
 
@@ -105,6 +108,7 @@ def solve_instance(
             n=best_of_n,
             strategies=candidate_strategies,
             scoring=selector_scoring,
+            chroma_store=chroma_store,
         )
         if memory_enabled and result.success:
             _persist_trace(
@@ -129,6 +133,7 @@ def solve_instance(
         max_repairs=max_repairs,
         explain_first=explain_first,
         stop_on_repeated_error=stop_on_repeated_error,
+        chroma_store=chroma_store,
     )
     if memory_enabled and result.success:
         _persist_trace(
@@ -156,6 +161,8 @@ def _solve_single(
     max_repairs: int,
     explain_first: bool,
     stop_on_repeated_error: bool,
+    chroma_store: ChromaStore | None = None,
+    retriever: HybridRetriever | None = None,
 ) -> InstanceResult:
     """Single-candidate flow (Milestone 4)."""
     result = InstanceResult(
@@ -174,6 +181,7 @@ def _solve_single(
         model=model,
         temperature=temperature,
         max_tokens=max_tokens,
+        retriever=retriever,
     )
     result.pipeline_result = pipeline_result
     result.llm_calls += pipeline_result.llm_calls
@@ -196,6 +204,7 @@ def _solve_single(
         max_repairs=max_repairs,
         explain_first=explain_first,
         stop_on_repeated_error=stop_on_repeated_error,
+        chroma_store=chroma_store,
     )
 
     result.final_sql = final_sql
@@ -231,6 +240,7 @@ def _solve_best_of_n(
     n: int,
     strategies: list[str] | None,
     scoring: dict | None,
+    chroma_store: ChromaStore | None = None,
 ) -> InstanceResult:
     """Best-of-N flow (Milestone 5)."""
     bon_result = run_best_of_n(
@@ -248,6 +258,7 @@ def _solve_best_of_n(
         stop_on_repeated_error=stop_on_repeated_error,
         strategies=strategies,
         scoring=scoring,
+        chroma_store=chroma_store,
     )
 
     # Summarize candidates (without heavy data like rows_sample)

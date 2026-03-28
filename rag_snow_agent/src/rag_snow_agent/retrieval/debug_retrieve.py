@@ -61,12 +61,15 @@ def build_schema_slice(
         col_slices = []
         for ci in cols_by_table.get(qname, []):
             col_name = ci.qualified_name.rsplit(".", 1)[-1]
+            raw_dtype = ci.metadata.get("data_type", "VARCHAR")
             cs = ColumnSlice(
                 name=col_name,
-                data_type=ci.metadata.get("data_type", "VARCHAR"),
+                data_type=raw_dtype,
                 comment=None,
+                original_name=col_name,  # preserves exact case from qualified_name
                 token_estimate=ci.metadata.get("token_estimate", 5),
                 fused_rank=ci.fused_rank,
+                is_variant=raw_dtype.upper() in ("VARIANT", "VARIANT_FIELD", "OBJECT", "ARRAY"),
             )
             classify_column(cs)
             col_slices.append(cs)
@@ -85,11 +88,14 @@ def build_schema_slice(
             )
             for meta in all_cols["metadatas"] or []:
                 col_name = meta.get("qualified_name", "").rsplit(".", 1)[-1]
+                raw_dtype = meta.get("data_type", "VARCHAR")
                 cs = ColumnSlice(
                     name=col_name,
-                    data_type=meta.get("data_type", "VARCHAR"),
+                    data_type=raw_dtype,
+                    original_name=col_name,
                     token_estimate=meta.get("token_estimate", 5),
                     fused_rank=999,
+                    is_variant=raw_dtype.upper() in ("VARIANT", "VARIANT_FIELD", "OBJECT", "ARRAY"),
                 )
                 classify_column(cs)
                 col_slices.append(cs)

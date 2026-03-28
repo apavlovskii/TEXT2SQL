@@ -11,6 +11,7 @@ uv run python - <<'PY'
 import json
 import os
 from pathlib import Path
+import pandas as pd
 import snowflake.connector
 
 candidate_paths = [
@@ -38,12 +39,10 @@ sql_query = os.environ.get("SNOWFLAKE_SMOKE_SQL", "SELECT CURRENT_VERSION(), CUR
 cursor.execute(sql_query)
 results = cursor.fetchall()
 columns = [desc[0] for desc in cursor.description]
+df = pd.DataFrame(results, columns=columns)
 
 print("Snowflake connectivity: OK")
-print("Columns:", columns)
-print("First rows:")
-for row in results[:5]:
-    print(row)
+print(df.head(5).to_string(index=False))
 
 cursor.close()
 conn.close()

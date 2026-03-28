@@ -14,6 +14,8 @@ from ..prompting.prompt_builder import (
     build_plan_prompt_with_strategy,
 )
 from ..prompting.sql_compiler import compile_plan
+from ..retrieval.hybrid_retriever import HybridRetriever
+from ..retrieval.plan_expansion import expand_schema_for_plan
 from ..retrieval.schema_slice import SchemaSlice
 from .llm_client import call_llm
 
@@ -75,6 +77,7 @@ def generate_candidate_sqls(
     max_tokens: int = 800,
     n: int = 2,
     strategies: list[str] | None = None,
+    retriever: HybridRetriever | None = None,
 ) -> list[CandidateItem]:
     """Produce *n* candidate SQLs using diverse prompt strategies.
 
@@ -94,6 +97,13 @@ def generate_candidate_sqls(
         plan_raw = call_llm(messages, model=model, temperature=temp, max_tokens=max_tokens)
 
         plan, _ = _try_parse_plan(plan_raw, model, max_tokens)
+
+        # Plan-guided schema expansion (optional)
+        if plan is not None and retriever is not None:
+            try:
+                expand_schema_for_plan(schema_slice, plan, retriever, db_id)
+            except Exception:
+                log.warning("Plan expansion failed for candidate %d", i + 1, exc_info=True)
 
         if plan is not None:
             sql = compile_plan(plan, schema_slice)

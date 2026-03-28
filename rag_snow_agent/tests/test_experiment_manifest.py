@@ -26,9 +26,12 @@ def _make_args(**kwargs) -> argparse.Namespace:
         "disable_repair": False,
         "disable_verification": False,
         "disable_join_graph": False,
+        "max_repairs": None,
         "ablation_preset": None,
         "split_jsonl": "fake.jsonl",
         "credentials": "creds.json",
+        "chroma_dir": None,
+        "skip_preflight": True,
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)

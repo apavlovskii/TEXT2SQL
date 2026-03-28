@@ -18,6 +18,8 @@ from ..prompting.prompt_builder import (
     build_sql_prompt,
 )
 from ..prompting.sql_compiler import compile_plan
+from ..retrieval.hybrid_retriever import HybridRetriever
+from ..retrieval.plan_expansion import expand_schema_for_plan
 from ..retrieval.schema_slice import SchemaSlice
 from .llm_client import call_llm
 
@@ -78,6 +80,7 @@ def run_pipeline(
     validation_fix_limit: int = 1,
     use_llm_sql: bool = False,
     memory_context: str | None = None,
+    retriever: HybridRetriever | None = None,
 ) -> PipelineResult:
     """Execute the full plan → SQL pipeline.
 
@@ -117,6 +120,13 @@ def run_pipeline(
         return result
 
     result.plan = plan
+
+    # ── Step 2b: Plan-guided schema expansion ──────────────────────────
+    if retriever is not None:
+        try:
+            expand_schema_for_plan(schema_slice, plan, retriever, db_id)
+        except Exception:
+            log.warning("Plan-guided schema expansion failed", exc_info=True)
 
     # ── Step 3: Compile plan into SQL ───────────────────────────────────
     if use_llm_sql:

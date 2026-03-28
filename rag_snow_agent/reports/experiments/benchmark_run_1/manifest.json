@@ -1,0 +1,97 @@
+{
+  "timestamp": "2026-03-28T05:36:04.312260+00:00",
+  "git_commit": "cd9033445ed954705f9fb60369743aa8c4cb9fcd",
+  "experiment": "benchmark_run_1",
+  "model": "gpt-4o",
+  "limit": 25,
+  "toggles": {
+    "disable_memory": false,
+    "disable_verifier": false,
+    "disable_best_of_n": false,
+    "disable_repair": false,
+    "disable_verification": false,
+    "disable_join_graph": false
+  },
+  "config_snapshot": {
+    "llm": {
+      "model": "gpt-4o",
+      "temperature": 0.2,
+      "max_output_tokens": 800
+    },
+    "retrieval": {
+      "top_k_tables": 8,
+      "top_k_columns": 25,
+      "top_k_docs": 4,
+      "rrf_k": 60,
+      "max_schema_tokens": 2500,
+      "max_doc_tokens": 1000,
+      "max_columns_per_table": 20,
+      "connectivity_expansion_rounds": 1,
+      "connectivity_mode": "join_graph",
+      "join_graph_max_depth": 3,
+      "min_join_confidence": 0.5,
+      "allow_heuristic_join_fallback": true
+    },
+    "indexing": {
+      "infer_join_edges": true,
+      "sample_overlap_for_join_edges": false
+    },
+    "agent": {
+      "best_of_n": 2,
+      "max_repairs": 2,
+      "explain_first": true,
+      "plan_retry_limit": 1,
+      "validation_fix_limit": 1,
+      "sample_rows": 20,
+      "stop_on_repeated_error": true,
+      "candidate_strategies": [
+        "default",
+        "join_first"
+      ],
+      "verification": {
+        "enable_fingerprinting": true,
+        "enable_metamorphic": true,
+        "max_metamorphic_checks": 2
+      },
+      "selector": {
+        "success_bonus": 100,
+        "repair_penalty": 10,
+        "empty_result_penalty": 20,
+        "small_output_bonus": 10,
+        "grouped_output_bonus": 5,
+        "grouped_single_row_penalty": 15,
+        "aggregate_single_row_bonus": 10,
+        "time_series_bonus": 10,
+        "object_not_found_penalty": 30,
+        "invalid_identifier_penalty": 30,
+        "aggregation_error_penalty": 15,
+        "verifier_weight": 20.0
+      }
+    },
+    "memory": {
+      "enabled": true,
+      "top_k": 3,
+      "max_memory_tokens": 800,
+      "min_similarity": 0.35,
+      "persist_successes": true
+    },
+    "verifier": {
+      "enabled": true,
+      "model_path": "rag_snow_agent/models/verifier.joblib"
+    },
+    "features": {
+      "retrieval": true,
+      "memory": true,
+      "join_graph": true,
+      "best_of_n": true,
+      "verification": true,
+      "verifier": true,
+      "repair": true
+    },
+    "snowflake": {
+      "statement_timeout_sec": 120,
+      "use_database_schema_session": true,
+      "qualification_mode": "session"
+    }
+  }
+}

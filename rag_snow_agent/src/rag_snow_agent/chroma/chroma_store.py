@@ -18,30 +18,33 @@ SCHEMA_COLLECTION = "schema_cards"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-large"
 
 
-def _get_embedding_function() -> OpenAIEmbeddingFunction | None:
-    """Return OpenAI embedding function if API key is available, else None (Chroma default)."""
+def _get_embedding_function(*, allow_fallback: bool = False) -> OpenAIEmbeddingFunction | None:
+    """Return OpenAI embedding function.
+
+    Raises RuntimeError if OPENAI_API_KEY is not set or invalid,
+    unless *allow_fallback* is True (used only in tests).
+    """
+    # Load .env (primary) or .env.example (fallback) if not already loaded
+    try:
+        from dotenv import load_dotenv
+
+        for env_file in [".env", ".env.example"]:
+            p = Path(env_file)
+            if p.exists():
+                load_dotenv(p, override=False)
+                break
+    except ImportError:
+        pass
+
     api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        # Try loading from .env / .env.example
-        try:
-            from dotenv import load_dotenv
-
-            for env_file in [".env", ".env.example"]:
-                p = Path(env_file)
-                if p.exists():
-                    load_dotenv(p, override=False)
-                    api_key = os.environ.get("OPENAI_API_KEY")
-                    if api_key:
-                        break
-        except ImportError:
-            pass
 
     if not api_key:
-        log.warning(
-            "OPENAI_API_KEY not set; falling back to Chroma default embeddings "
-            "(all-MiniLM-L6-v2). Set OPENAI_API_KEY for stronger retrieval."
+        if allow_fallback:
+            return None
+        raise RuntimeError(
+            "OPENAI_API_KEY is not set. "
+            "Set it in .env or export it before running."
         )
-        return None
 
     log.info("Using OpenAI embedding model: %s", DEFAULT_EMBEDDING_MODEL)
     return OpenAIEmbeddingFunction(
