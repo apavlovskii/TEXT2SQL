@@ -1,0 +1,20 @@
+# Ablation preset: baseline single candidate
+# No memory, no best_of_n, no verifier — minimal pipeline.
+
+features:
+  retrieval: true
+  memory: false
+  join_graph: true
+  best_of_n: false
+  verification: false
+  verifier: false
+  repair: true
+
+agent:
+  best_of_n: 1
+
+memory:
+  enabled: false
+
+verifier:
+  enabled: false

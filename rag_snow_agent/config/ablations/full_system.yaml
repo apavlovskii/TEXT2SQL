@@ -1,0 +1,19 @@
+# Ablation preset: full system — everything enabled.
+
+features:
+  retrieval: true
+  memory: true
+  join_graph: true
+  best_of_n: true
+  verification: true
+  verifier: true
+  repair: true
+
+agent:
+  best_of_n: 2
+
+memory:
+  enabled: true
+
+verifier:
+  enabled: true
