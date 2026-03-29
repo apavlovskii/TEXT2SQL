@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..chroma.chroma_store import ChromaStore
 from ..chroma.trace_memory import TraceMemoryStore
@@ -86,12 +87,20 @@ def solve_instance(
     chroma_dir: str | None = None,
     memory_enabled: bool = True,
     chroma_store: ChromaStore | None = None,
+    gold_dir: str | Path | None = None,
+    max_same_error_type: int = 3,
 ) -> InstanceResult:
     """Solve one instance.
 
     If *best_of_n* > 1, generates N candidates, executes+repairs each, and
     selects the best. Otherwise uses the single-candidate M4 flow.
     """
+    # Load eval standards once if gold_dir provided
+    _eval_standards: dict | None = None
+    if gold_dir:
+        from ..eval.gold_verifier import load_eval_standards
+        gold_path = Path(gold_dir)
+        _eval_standards = load_eval_standards(gold_path / "spider2snow_eval.jsonl")
     if best_of_n > 1:
         result = _solve_best_of_n(
             instance_id=instance_id,
@@ -109,6 +118,9 @@ def solve_instance(
             strategies=candidate_strategies,
             scoring=selector_scoring,
             chroma_store=chroma_store,
+            gold_dir=gold_dir,
+            eval_standards=_eval_standards,
+            max_same_error_type=max_same_error_type,
         )
         if memory_enabled and result.success:
             _persist_trace(
@@ -134,6 +146,9 @@ def solve_instance(
         explain_first=explain_first,
         stop_on_repeated_error=stop_on_repeated_error,
         chroma_store=chroma_store,
+        gold_dir=gold_dir,
+        eval_standards=_eval_standards,
+        max_same_error_type=max_same_error_type,
     )
     if memory_enabled and result.success:
         _persist_trace(
@@ -163,6 +178,9 @@ def _solve_single(
     stop_on_repeated_error: bool,
     chroma_store: ChromaStore | None = None,
     retriever: HybridRetriever | None = None,
+    gold_dir: str | Path | None = None,
+    eval_standards: dict | None = None,
+    max_same_error_type: int = 3,
 ) -> InstanceResult:
     """Single-candidate flow (Milestone 4)."""
     result = InstanceResult(
@@ -205,6 +223,10 @@ def _solve_single(
         explain_first=explain_first,
         stop_on_repeated_error=stop_on_repeated_error,
         chroma_store=chroma_store,
+        gold_dir=gold_dir,
+        eval_standards=eval_standards,
+        instance_id=instance_id,
+        max_same_error_type=max_same_error_type,
     )
 
     result.final_sql = final_sql
@@ -241,6 +263,9 @@ def _solve_best_of_n(
     strategies: list[str] | None,
     scoring: dict | None,
     chroma_store: ChromaStore | None = None,
+    gold_dir: str | Path | None = None,
+    eval_standards: dict | None = None,
+    max_same_error_type: int = 3,
 ) -> InstanceResult:
     """Best-of-N flow (Milestone 5)."""
     bon_result = run_best_of_n(
@@ -259,6 +284,9 @@ def _solve_best_of_n(
         strategies=strategies,
         scoring=scoring,
         chroma_store=chroma_store,
+        gold_dir=gold_dir,
+        eval_standards=eval_standards,
+        max_same_error_type=max_same_error_type,
     )
 
     # Summarize candidates (without heavy data like rows_sample)

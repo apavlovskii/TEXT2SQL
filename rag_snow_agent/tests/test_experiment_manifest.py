@@ -32,6 +32,8 @@ def _make_args(**kwargs) -> argparse.Namespace:
         "credentials": "creds.json",
         "chroma_dir": None,
         "skip_preflight": True,
+        "gold_dir": None,
+        "max_same_error_type": 3,
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)

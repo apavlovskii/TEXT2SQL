@@ -1,0 +1,39 @@
+{
+  "timestamp": "2026-03-29T12:30:23.650738+00:00",
+  "git_commit": "802ced0efd6ee599bf3386ff3cad706cd50e20a5",
+  "experiment": "benchmark_run_4",
+  "model": "gpt-5.4",
+  "limit": 25,
+  "toggles": {
+    "disable_memory": false,
+    "disable_verifier": false,
+    "disable_best_of_n": false,
+    "disable_repair": false,
+    "disable_verification": false,
+    "disable_join_graph": false
+  },
+  "config_snapshot": {
+    "retrieval": {
+      "top_k_tables": 8,
+      "top_k_columns": 25,
+      "max_schema_tokens": 2500,
+      "rrf_k": 60
+    },
+    "llm": {
+      "model": "gpt-5.4",
+      "temperature": 0.2,
+      "max_output_tokens": null
+    },
+    "agent": {
+      "plan_retry_limit": 1,
+      "validation_fix_limit": 1,
+      "best_of_n": 3,
+      "max_repairs": 5
+    },
+    "indexing": {
+      "gold_sql_dir": "Spider2/spider2-snow/evaluation_suite/gold/sql/",
+      "ingest_gold_joins": true
+    },
+    "features": {}
+  }
+}

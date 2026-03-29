@@ -15,6 +15,8 @@ AGGREGATION_ERROR = "aggregation_error"
 TYPE_MISMATCH = "type_mismatch"
 UNKNOWN_FUNCTION = "unknown_function"
 OTHER_EXECUTION_ERROR = "other_execution_error"
+RESULT_MISMATCH = "result_mismatch"
+EMPTY_RESULT = "empty_result"
 
 # ── Patterns (order matters: more specific first) ────────────────────────────
 

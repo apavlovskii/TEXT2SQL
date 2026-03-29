@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..chroma.chroma_store import ChromaStore
 from ..retrieval.schema_slice import SchemaSlice
@@ -12,9 +13,11 @@ from ..snowflake.probes import probe_column_exists
 from .column_validator import validate_columns_against_index
 from .error_classifier import (
     AGGREGATION_ERROR,
+    EMPTY_RESULT,
     INVALID_IDENTIFIER,
     NOT_AUTHORIZED,
     OBJECT_NOT_FOUND,
+    RESULT_MISMATCH,
     classify_snowflake_error,
     extract_offending_identifier,
     extract_offending_object,
@@ -136,6 +139,25 @@ def _build_column_validation_repair_prompt(
     ]
 
 
+def _build_result_mismatch_repair_prompt(
+    instruction: str,
+    previous_sql: str,
+    error_message: str,
+    schema_text: str,
+) -> list[dict[str, str]]:
+    extra = (
+        "The SQL executed successfully but returned WRONG RESULTS. "
+        "Re-read the question carefully. Check: "
+        "1) Are the correct tables and columns used? "
+        "2) Are JOINs correct? "
+        "3) Are WHERE filters matching the question's conditions exactly? "
+        "4) Are aggregations (GROUP BY, COUNT, SUM) correct? "
+        "5) Is the date/time filtering correct? "
+        "Return a corrected SQL that answers the question accurately."
+    )
+    return _build_repair_prompt(instruction, previous_sql, error_message, schema_text, extra)
+
+
 def _strip_sql_fences(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -230,6 +252,10 @@ def refine_sql(
     explain_first: bool = True,
     stop_on_repeated_error: bool = True,
     chroma_store: ChromaStore | None = None,
+    gold_dir: str | Path | None = None,
+    eval_standards: dict | None = None,
+    instance_id: str | None = None,
+    max_same_error_type: int = 3,
 ) -> tuple[str, list[RepairTraceItem], ExecutionResult | None]:
     """Run EXPLAIN → execute → repair loop.
 
@@ -299,7 +325,7 @@ def refine_sql(
 
                 # Early termination: same error TYPE seen 3+ times
                 error_type_counts[error_type] = error_type_counts.get(error_type, 0) + 1
-                if error_type_counts.get(error_type, 0) >= 3:
+                if error_type_counts.get(error_type, 0) >= max_same_error_type:
                     log.info(
                         "Error type '%s' occurred %d times, stopping repair loop",
                         error_type, error_type_counts[error_type],
@@ -334,8 +360,67 @@ def refine_sql(
         last_result = exec_result
 
         if exec_result.success:
-            log.info("Execution succeeded (attempt %d)", attempt + 1)
-            return current_sql, trace, exec_result
+            # Check gold match if gold data available
+            if gold_dir and instance_id:
+                from ..eval.gold_verifier import verify_against_gold
+
+                gold_result = verify_against_gold(
+                    instance_id, current_sql, db_id, executor, gold_dir, eval_standards,
+                )
+                if gold_result.matched:
+                    log.info("Gold match PASSED (attempt %d)", attempt + 1)
+                    return current_sql, trace, exec_result
+                else:
+                    # Treat as error and repair
+                    error_msg = f"SQL executed but results don't match gold: {gold_result.error}"
+                    if gold_result.details:
+                        error_msg += f" ({gold_result.details})"
+                    error_type = gold_result.error or RESULT_MISMATCH
+                    log.info("Gold match FAILED (attempt %d): %s", attempt + 1, error_msg[:120])
+
+                    # Track for early termination
+                    error_type_counts[error_type] = error_type_counts.get(error_type, 0) + 1
+                    if error_type_counts.get(error_type, 0) >= max_same_error_type:
+                        log.info(
+                            "Error type '%s' occurred %d times, stopping repair loop",
+                            error_type, error_type_counts[error_type],
+                        )
+                        last_result = ExecutionResult(
+                            success=False, sql=current_sql,
+                            error_message=error_msg, error_type=error_type,
+                            row_count=exec_result.row_count,
+                        )
+                        break
+
+                    if attempt >= max_repairs:
+                        # Mark as failed even though execution succeeded
+                        last_result = ExecutionResult(
+                            success=False, sql=current_sql,
+                            error_message=error_msg, error_type=error_type,
+                            row_count=exec_result.row_count,
+                        )
+                        break
+
+                    # Repair: tell LLM results were wrong
+                    repaired = _attempt_repair(
+                        instruction, current_sql, error_msg, error_type,
+                        schema_text, schema_slice, model, temperature, max_tokens,
+                        chroma_store=chroma_store,
+                    )
+                    trace.append(RepairTraceItem(
+                        attempt=attempt + 1,
+                        input_sql=current_sql,
+                        error_type=error_type,
+                        error_message=error_msg[:500],
+                        repair_action=_action_for_type(error_type),
+                        output_sql=repaired,
+                    ))
+                    current_sql = repaired
+                    continue
+            else:
+                # No gold data, return as before
+                log.info("Execution succeeded (attempt %d)", attempt + 1)
+                return current_sql, trace, exec_result
 
         error_msg = exec_result.error_message or "Execution failed"
         error_type = classify_snowflake_error(error_msg)
@@ -350,7 +435,7 @@ def refine_sql(
 
         # Early termination: same error TYPE seen 3+ times
         error_type_counts[error_type] = error_type_counts.get(error_type, 0) + 1
-        if error_type_counts.get(error_type, 0) >= 3:
+        if error_type_counts.get(error_type, 0) >= max_same_error_type:
             log.info(
                 "Error type '%s' occurred %d times, stopping repair loop",
                 error_type, error_type_counts[error_type],
@@ -386,6 +471,8 @@ def _action_for_type(error_type: str) -> str:
         OBJECT_NOT_FOUND: "fix_object_reference",
         NOT_AUTHORIZED: "fix_object_reference",
         AGGREGATION_ERROR: "rewrite_aggregation",
+        RESULT_MISMATCH: "fix_wrong_results",
+        EMPTY_RESULT: "fix_empty_results",
     }.get(error_type, "general_repair")
 
 
@@ -424,7 +511,11 @@ def _attempt_repair(
     chroma_store: ChromaStore | None = None,
 ) -> str:
     """Dispatch to error-specific repair strategy and return fixed SQL."""
-    if error_type == INVALID_IDENTIFIER:
+    if error_type in (RESULT_MISMATCH, EMPTY_RESULT):
+        messages = _build_result_mismatch_repair_prompt(
+            instruction, current_sql, error_msg, schema_text
+        )
+    elif error_type == INVALID_IDENTIFIER:
         offending = extract_offending_identifier(error_msg)
         messages = _build_identifier_repair_prompt(
             instruction, current_sql, error_msg, schema_text, offending

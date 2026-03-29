@@ -403,6 +403,8 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     max_tokens=max_tokens,
                     memory_enabled=memory_enabled,
                     chroma_dir=args.chroma_dir,
+                    gold_dir=args.gold_dir,
+                    max_same_error_type=args.max_same_error_type,
                 )
 
                 # Write Spider2 result.json
@@ -416,6 +418,11 @@ def run_experiment(args: argparse.Namespace) -> Path:
 
                 executor.close()
 
+                # Determine gold_matched field
+                gold_matched = None
+                if args.gold_dir:
+                    gold_matched = result.success  # success implies gold match when gold_dir is set
+
                 record = {
                     "instance_id": instance_id,
                     "db_id": db_id,
@@ -428,6 +435,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     "error_message": result.error_message,
                     "error_type": None,
                     "selection_reason": result.selection_reason,
+                    "gold_matched": gold_matched,
                 }
                 if result.success:
                     successes += 1
@@ -502,6 +510,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable_verification", action="store_true")
     parser.add_argument("--disable_join_graph", action="store_true")
     parser.add_argument("--skip_preflight", action="store_true", help="Skip Snowflake/OpenAI connectivity checks")
+    parser.add_argument("--gold_dir", default=None, help="Path to gold evaluation directory (enables gold-match verification)")
+    parser.add_argument("--max_same_error_type", type=int, default=3, help="Stop retrying after N same-type errors per candidate (default 3)")
     return parser
 
 

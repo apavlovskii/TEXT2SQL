@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from pathlib import Path
 
 from ..chroma.chroma_store import ChromaStore
 from ..retrieval.schema_slice import SchemaSlice
@@ -80,6 +81,9 @@ def run_best_of_n(
     enable_metamorphic: bool = True,
     max_metamorphic_checks: int = 2,
     chroma_store: ChromaStore | None = None,
+    gold_dir: str | Path | None = None,
+    eval_standards: dict | None = None,
+    max_same_error_type: int = 3,
 ) -> dict:
     """Generate N candidates, execute+repair, verify, select the best."""
     log.info(
@@ -143,6 +147,10 @@ def run_best_of_n(
             explain_first=explain_first,
             stop_on_repeated_error=stop_on_repeated_error,
             chroma_store=chroma_store,
+            gold_dir=gold_dir,
+            eval_standards=eval_standards,
+            instance_id=instance_id,
+            max_same_error_type=max_same_error_type,
         )
 
         cr = _candidate_to_result(candidate, final_sql, trace, exec_result)
