@@ -7,7 +7,9 @@ TableCard / ColumnCard into a local ChromaDB.
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -26,6 +28,7 @@ from .schema_cards import ColumnCard, JoinCard, TableCard
 log = logging.getLogger(__name__)
 
 _TIME_TYPE_KEYWORDS = {"DATE", "TIME", "TIMESTAMP", "DATETIME"}
+_DATE_SUFFIX_RE = re.compile(r"^(.+?)_?(\d{6,8})$")
 
 
 def _is_time_type(data_type: str) -> bool:
@@ -89,6 +92,100 @@ def build_join_card(edge: JoinEdge, db_id: str) -> JoinCard:
     )
 
 
+def _collapse_partition_tables(
+    tables: list[TableInfo],
+) -> tuple[list[TableInfo], dict[str, str]]:
+    """Merge daily partition tables into one representative per schema group.
+
+    GA360 has hundreds of tables like ``GA_SESSIONS_20170101`` …
+    ``GA_SESSIONS_20170801`` that share the same column schema.  These are
+    collapsed into a single representative named ``GA_SESSIONS`` (date suffix
+    stripped) with a descriptive comment.
+
+    Returns ``(collapsed_tables, rename_map)`` where *rename_map* maps each
+    original ``qualified_name`` to the collapsed representative name so that
+    VARIANT sub-field cards can be remapped.
+    """
+    # Group by (schema, base_name) — ignore column differences so that
+    # partition tables with slightly varying schemas (e.g., GA360's Jul–Aug
+    # group has an extra clientId column) still merge into one representative.
+    groups: dict[str, list[TableInfo]] = {}
+    non_partition: list[TableInfo] = []
+
+    for t in tables:
+        m = _DATE_SUFFIX_RE.match(t.table_name)
+        if m:
+            base = m.group(1).rstrip("_")
+            sig = f"{t.table_schema}||{base}"
+            groups.setdefault(sig, []).append(t)
+        else:
+            non_partition.append(t)
+
+    result = list(non_partition)
+    rename_map: dict[str, str] = {}
+
+    for _sig, group in groups.items():
+        if len(group) < 3:
+            # Not a real partition pattern — keep all
+            result.extend(group)
+            continue
+
+        # Sort by date suffix descending — pick the most recent as representative
+        # (most likely to have data and be queryable)
+        group.sort(
+            key=lambda t: _DATE_SUFFIX_RE.match(t.table_name).group(2),  # type: ignore[union-attr]
+            reverse=True,
+        )
+        rep = group[0]
+        m = _DATE_SUFFIX_RE.match(rep.table_name)
+        base_name = m.group(1).rstrip("_") if m else rep.table_name
+
+        # Determine date range from group
+        dates = sorted(
+            _DATE_SUFFIX_RE.match(t.table_name).group(2)  # type: ignore[union-attr]
+            for t in group
+        )
+        min_date, max_date = dates[0], dates[-1]
+        total_rows = sum(t.row_count or 0 for t in group)
+
+        # Keep the actual table name of the representative (it exists in
+        # Snowflake), but add a comment explaining the partition pattern
+        # so the LLM filters by the "date" column instead of picking tables.
+        merged = copy.copy(rep)
+        merged.row_count = total_rows
+        merged.comment = (
+            f"Partitioned: {len(group)} daily tables {base_name}_YYYYMMDD "
+            f"({min_date}–{max_date}). All share the same schema. "
+            f"Query this table and filter with WHERE \"date\" >= 'YYYYMMDD' "
+            f"AND \"date\" < 'YYYYMMDD' to select date ranges."
+        )
+
+        # Build union of columns across all partition variants so no
+        # columns are lost when schemas differ slightly.
+        seen_cols: dict[str, object] = {}
+        for t in group:
+            for c in t.columns:
+                if c.column_name not in seen_cols:
+                    seen_cols[c.column_name] = copy.copy(c)
+                    # Update table references to the representative
+                    seen_cols[c.column_name].table_name = rep.table_name
+        merged.columns = list(seen_cols.values())
+
+        result.append(merged)
+
+        # Build rename map: all original tables → the representative
+        merged_qname = merged.qualified_name
+        for t in group:
+            rename_map[t.qualified_name] = merged_qname
+
+        log.info(
+            "Collapsed %d partition tables into %s (%s – %s, %s total rows)",
+            len(group), merged_qname, min_date, max_date, f"{total_rows:,}",
+        )
+
+    return result, rename_map
+
+
 def run(db_id: str, credentials: str, chroma_dir: str | None = None) -> dict[str, int]:
     """Main entry point. Returns counts dict {table: N, column: M, join: J}."""
     conn = connect(credentials)
@@ -98,6 +195,20 @@ def run(db_id: str, credentials: str, chroma_dir: str | None = None) -> dict[str
         variant_subfields = extract_variant_subfields(conn, db_id, tables)
     finally:
         conn.close()
+
+    # Collapse daily partition tables (e.g. GA360 GA_SESSIONS_YYYYMMDD)
+    tables, rename_map = _collapse_partition_tables(tables)
+    if rename_map:
+        log.info("Partition collapse: %d original tables mapped to %d representatives",
+                 len(rename_map), len(set(rename_map.values())))
+
+    # Remap VARIANT sub-field cards to use collapsed table names
+    for vf in variant_subfields:
+        old_qname = f"{vf.table_catalog}.{vf.table_schema}.{vf.table_name}"
+        if old_qname in rename_map:
+            new_qname = rename_map[old_qname]
+            # Update the table_name to the collapsed name
+            vf.table_name = new_qname.rsplit(".", 1)[-1]
 
     table_cards = [build_table_card(t, db_id) for t in tables]
     column_cards = [

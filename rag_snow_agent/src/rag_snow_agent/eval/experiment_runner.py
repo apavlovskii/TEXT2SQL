@@ -92,6 +92,9 @@ def apply_cli_toggles(config: dict, args: argparse.Namespace) -> dict:
     if args.disable_join_graph:
         features["join_graph"] = False
         config.setdefault("retrieval", {})["connectivity_mode"] = "heuristic"
+    if args.disable_sample_records:
+        features["sample_records"] = False
+        config.setdefault("sample_records", {})["enabled"] = False
 
     # CLI overrides for model / best_of_n / max_repairs
     if args.model:
@@ -117,6 +120,7 @@ def write_manifest(
         "disable_repair": args.disable_repair,
         "disable_verification": args.disable_verification,
         "disable_join_graph": args.disable_join_graph,
+        "disable_sample_records": args.disable_sample_records,
     }
     manifest = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -385,11 +389,58 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 # Determine solve parameters from config
                 agent_cfg = config.get("agent", {})
                 llm_cfg = config.get("llm", {})
+                sem_cfg = config.get("semantic_layer", {})
                 bon = agent_cfg.get("best_of_n", 1)
                 max_repairs = agent_cfg.get("max_repairs", 2)
                 memory_enabled = config.get("memory", {}).get("enabled", True)
                 model = llm_cfg.get("model", "gpt-4o-mini")
                 max_tokens = llm_cfg.get("max_output_tokens", 4096)
+                decompose = agent_cfg.get("decompose_questions", False)
+
+                # Retrieve semantic context if semantic layer is enabled
+                semantic_context = None
+                if sem_cfg.get("enabled", False):
+                    try:
+                        from ..retrieval.semantic_retriever import retrieve_semantic_context
+                        semantic_context = retrieve_semantic_context(
+                            db_id=db_id,
+                            instruction=instruction,
+                            chroma_store=store,
+                            top_k=sem_cfg.get("retrieval_top_k", 8),
+                        )
+                        if semantic_context:
+                            log.info("Semantic context retrieved (%d chars) for %s", len(semantic_context), instance_id)
+                        else:
+                            log.warning("Semantic context is EMPTY for %s", instance_id)
+                    except Exception as exc:
+                        log.error("Semantic context retrieval FAILED for %s: %s", instance_id, exc, exc_info=True)
+                        raise
+
+                # Retrieve sample records context if enabled
+                sample_context = None
+                sample_cfg = config.get("sample_records", {})
+                if sample_cfg.get("enabled", False):
+                    try:
+                        from ..chroma.sample_records import SampleRecordStore, build_sample_context
+
+                        sample_store = SampleRecordStore(store)
+                        table_fqns = [t.qualified_name for t in schema_slice.tables]
+                        table_docs = sample_store.get_sample_context_for_tables(db_id, table_fqns)
+                        sample_context = build_sample_context(
+                            table_docs,
+                            max_tokens=sample_cfg.get("max_prompt_tokens", 800),
+                        )
+                        if sample_context:
+                            log.info("Sample records context retrieved (%d chars) for %s", len(sample_context), instance_id)
+                        else:
+                            log.info("No sample records found for %s tables", instance_id)
+                    except Exception as exc:
+                        log.warning("Sample records retrieval failed for %s: %s", instance_id, exc)
+
+                log.info("Features: decompose=%s, semantic_context=%s chars, sample_context=%s chars, chroma_store=%s",
+                         decompose, len(semantic_context) if semantic_context else 0,
+                         len(sample_context) if sample_context else 0,
+                         "YES" if store else "NO")
 
                 result = solve_instance(
                     instance_id=instance_id,
@@ -405,6 +456,10 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     chroma_dir=args.chroma_dir,
                     gold_dir=args.gold_dir,
                     max_same_error_type=args.max_same_error_type,
+                    chroma_store=store,
+                    semantic_context=semantic_context,
+                    decompose=decompose,
+                    sample_context=sample_context,
                 )
 
                 # Write Spider2 result.json
@@ -509,6 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable_repair", action="store_true")
     parser.add_argument("--disable_verification", action="store_true")
     parser.add_argument("--disable_join_graph", action="store_true")
+    parser.add_argument("--disable_sample_records", action="store_true")
     parser.add_argument("--skip_preflight", action="store_true", help="Skip Snowflake/OpenAI connectivity checks")
     parser.add_argument("--gold_dir", default=None, help="Path to gold evaluation directory (enables gold-match verification)")
     parser.add_argument("--max_same_error_type", type=int, default=3, help="Stop retrying after N same-type errors per candidate (default 3)")

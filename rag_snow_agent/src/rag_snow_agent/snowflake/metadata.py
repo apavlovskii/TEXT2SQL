@@ -260,12 +260,14 @@ def _extract_for_table(
         quoted_col = f'"{col.column_name}"'
 
         if dtype in ("VARIANT", "OBJECT"):
+            # Try OBJECT_KEYS first (works if the value is a JSON object)
             sql = (
                 f"SELECT OBJECT_KEYS({quoted_col}) AS keys "
                 f"FROM {fqn} "
                 f"WHERE {quoted_col} IS NOT NULL "
                 f"LIMIT 1"
             )
+            keys_found = False
             try:
                 cur.execute(sql)
                 row = cur.fetchone()
@@ -284,8 +286,40 @@ def _extract_for_table(
                             comment=f"Sub-field of {col.column_name} ({dtype})",
                         ))
                         ordinal += 1
+                    keys_found = bool(keys)
             except Exception:
                 log.debug("OBJECT_KEYS failed for %s.%s", fqn, col.column_name, exc_info=True)
+
+            # If OBJECT_KEYS returned nothing, the VARIANT may hold an array
+            # of objects.  Try LATERAL FLATTEN + OBJECT_KEYS on the first element.
+            if not keys_found:
+                array_sql = (
+                    f"SELECT OBJECT_KEYS(f.value) AS keys "
+                    f"FROM {fqn}, "
+                    f"LATERAL FLATTEN(input => {quoted_col}) f "
+                    f"WHERE {quoted_col} IS NOT NULL "
+                    f"LIMIT 1"
+                )
+                try:
+                    cur.execute(array_sql)
+                    row = cur.fetchone()
+                    if row and row[0]:
+                        import json
+                        keys = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                        for key in keys:
+                            result.append(ColumnInfo(
+                                table_catalog=table.table_catalog,
+                                table_schema=table.table_schema,
+                                table_name=table.table_name,
+                                column_name=f'{quoted_col}:{key}',
+                                data_type="VARIANT_FIELD",
+                                ordinal_position=ordinal,
+                                is_nullable="YES",
+                                comment=f"Sub-field of {col.column_name} (VARIANT array element)",
+                            ))
+                            ordinal += 1
+                except Exception:
+                    log.debug("FLATTEN+OBJECT_KEYS fallback failed for %s.%s", fqn, col.column_name, exc_info=True)
 
         elif dtype == "ARRAY":
             sql = (

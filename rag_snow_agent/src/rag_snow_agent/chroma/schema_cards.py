@@ -48,13 +48,16 @@ class TableCard(BaseModel):
         return f"table:{self.qualified_name}"
 
     def chroma_metadata(self) -> dict:
-        return {
+        meta = {
             "db_id": self.db_id,
             "object_type": "table",
             "qualified_name": self.qualified_name,
             "source": "information_schema",
             "token_estimate": self.token_estimate,
         }
+        if self.comment:
+            meta["comment"] = self.comment
+        return meta
 
 
 class ColumnCard(BaseModel):
@@ -85,7 +88,7 @@ class ColumnCard(BaseModel):
         return f"column:{self.qualified_name}"
 
     def chroma_metadata(self) -> dict:
-        return {
+        meta = {
             "db_id": self.db_id,
             "object_type": "column",
             "qualified_name": self.qualified_name,
@@ -94,6 +97,9 @@ class ColumnCard(BaseModel):
             "table_qualified_name": self.table_qualified_name,
             "data_type": self.data_type,
         }
+        if self.comment:
+            meta["comment"] = self.comment
+        return meta
 
 
 class JoinCard(BaseModel):

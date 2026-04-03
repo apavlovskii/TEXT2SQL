@@ -1,0 +1,985 @@
+{
+  "databases": {
+    "GA360": {
+      "description": "Google Analytics 360 session-level web analytics data from the Google Merchandise Store. Each row represents one user session.",
+      "tables": {
+        "GA360.GOOGLE_ANALYTICS_SAMPLE.GA_SESSIONS": {
+          "description": "Web analytics sessions from the Google Merchandise Store. Contains session-level metrics, traffic source, device info, geographic data, and per-hit event details including ecommerce transactions.",
+          "partition_info": "Daily partitioned as GA_SESSIONS_YYYYMMDD (range: 20160801\u201320170801). Query one representative table and filter with WHERE \"date\" >= 'YYYYMMDD' AND \"date\" < 'YYYYMMDD'.",
+          "columns": {
+            "fullVisitorId": {
+              "type": "TEXT",
+              "description": "The unique visitor ID (primary user identifier). Use this to identify distinct users across sessions."
+            },
+            "visitorId": {
+              "type": "NUMBER",
+              "description": "Deprecated. Use fullVisitorId instead."
+            },
+            "userId": {
+              "type": "TEXT",
+              "description": "Overridden User ID sent to Analytics (may be null)."
+            },
+            "visitNumber": {
+              "type": "NUMBER",
+              "description": "The session number for this user. First session = 1."
+            },
+            "visitId": {
+              "type": "NUMBER",
+              "description": "Session identifier. Only unique per user \u2014 combine with fullVisitorId for a globally unique session ID."
+            },
+            "visitStartTime": {
+              "type": "NUMBER",
+              "description": "Session start time as a POSIX/UNIX timestamp (seconds since 1970-01-01). Convert with TO_TIMESTAMP(visitStartTime)."
+            },
+            "date": {
+              "type": "TEXT",
+              "description": "Session date in YYYYMMDD string format. Compare as strings: WHERE \"date\" >= '20170201' AND \"date\" < '20170301'."
+            },
+            "channelGrouping": {
+              "type": "TEXT",
+              "description": "Default Channel Group for the session (e.g., 'Organic Search', 'Direct', 'Referral', 'Paid Search', 'Social')."
+            },
+            "socialEngagementType": {
+              "type": "TEXT",
+              "description": "Either 'Socially Engaged' or 'Not Socially Engaged'."
+            },
+            "totals": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Session-level aggregate metrics. Access with t.\"totals\":\"field\"::TYPE. Do NOT LATERAL FLATTEN \u2014 this is an object.",
+              "fields": {
+                "hits": "INTEGER \u2014 Total number of hits in the session.",
+                "pageviews": "INTEGER \u2014 Total pageviews in the session.",
+                "transactions": "INTEGER \u2014 Number of ecommerce transactions. >= 1 means a purchase session.",
+                "totalTransactionRevenue": "INTEGER \u2014 Total transaction revenue multiplied by 10^6. DIVIDE BY 1000000 for USD.",
+                "timeOnSite": "INTEGER \u2014 Session duration in seconds.",
+                "newVisits": "INTEGER \u2014 1 if first visit, else null.",
+                "visits": "INTEGER \u2014 1 for sessions with interaction events, null otherwise.",
+                "bounces": "INTEGER \u2014 1 if session bounced, else null."
+              }
+            },
+            "trafficSource": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Traffic source that originated this session. Access with t.\"trafficSource\":\"field\"::TYPE.",
+              "fields": {
+                "source": "STRING \u2014 Traffic source (e.g., 'google', hostname of referrer, or utm_source).",
+                "medium": "STRING \u2014 Traffic medium (e.g., 'organic', 'cpc', 'referral', or utm_medium).",
+                "campaign": "STRING \u2014 Campaign name (usually from utm_campaign URL parameter).",
+                "keyword": "STRING \u2014 Search keyword (when medium is 'organic' or 'cpc', or from utm_term).",
+                "adContent": "STRING \u2014 Ad content (from utm_content).",
+                "isTrueDirect": "BOOLEAN \u2014 True if session source was direct (user typed URL or used bookmark).",
+                "referralPath": "STRING \u2014 Referral path when medium is 'referral'.",
+                "adwordsClickInfo": "OBJECT \u2014 Nested Google Ads click info (adGroupId, campaignId, gclId, etc.)."
+              }
+            },
+            "device": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "User device information. Access with t.\"device\":\"field\"::TYPE.",
+              "fields": {
+                "browser": "STRING \u2014 Browser name (e.g., 'Chrome', 'Firefox').",
+                "browserVersion": "STRING \u2014 Browser version.",
+                "deviceCategory": "STRING \u2014 Device type: 'desktop', 'mobile', or 'tablet'.",
+                "operatingSystem": "STRING \u2014 OS name (e.g., 'Windows', 'Macintosh', 'Android').",
+                "operatingSystemVersion": "STRING \u2014 OS version.",
+                "isMobile": "BOOLEAN \u2014 Deprecated. Use deviceCategory instead.",
+                "mobileDeviceBranding": "STRING \u2014 Mobile device brand.",
+                "mobileDeviceModel": "STRING \u2014 Mobile device model.",
+                "language": "STRING \u2014 Device language (IETF code).",
+                "screenResolution": "STRING \u2014 Screen resolution (e.g., '1920x1080')."
+              }
+            },
+            "geoNetwork": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Geographic location of the user based on IP. Access with t.\"geoNetwork\":\"field\"::TYPE.",
+              "fields": {
+                "continent": "STRING \u2014 Continent name.",
+                "subContinent": "STRING \u2014 Sub-continent name.",
+                "country": "STRING \u2014 Country name.",
+                "region": "STRING \u2014 Region/state name.",
+                "metro": "STRING \u2014 Designated Market Area.",
+                "city": "STRING \u2014 City name.",
+                "networkDomain": "STRING \u2014 ISP domain (deprecated)."
+              }
+            },
+            "hits": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of hits (pageviews, events, transactions) per session. Use LATERAL FLATTEN(input => t.\"hits\") h. Each element has nested objects.",
+              "access_pattern": "LATERAL FLATTEN(input => t.\"hits\") h, then h.value:\"nested\":\"field\"::TYPE",
+              "fields": {
+                "type": "STRING \u2014 Hit type: PAGE, TRANSACTION, ITEM, EVENT, SOCIAL, APPVIEW, EXCEPTION.",
+                "page": {
+                  "_description": "OBJECT \u2014 Page info. Access: h.value:\"page\":\"pagePath\"::STRING",
+                  "pagePath": "STRING \u2014 URL path of the page.",
+                  "pageTitle": "STRING \u2014 Page title."
+                },
+                "product": {
+                  "_description": "OBJECT \u2014 Product data. Access: h.value:\"product\":\"v2ProductName\"::STRING. NOTE: field is v2ProductName not productName.",
+                  "v2ProductName": "STRING \u2014 Product name (use this, NOT productName).",
+                  "v2ProductCategory": "STRING \u2014 Product category.",
+                  "productRevenue": "INTEGER \u2014 Product revenue multiplied by 10^6. DIVIDE BY 1000000 for USD.",
+                  "productQuantity": "INTEGER \u2014 Quantity purchased.",
+                  "productPrice": "INTEGER \u2014 Product price multiplied by 10^6."
+                },
+                "transaction": {
+                  "_description": "OBJECT \u2014 Transaction data. Access: h.value:\"transaction\":\"transactionId\"::STRING",
+                  "transactionId": "STRING \u2014 Transaction ID.",
+                  "transactionRevenue": "INTEGER \u2014 Transaction revenue multiplied by 10^6. DIVIDE BY 1000000 for USD."
+                },
+                "eCommerceAction": {
+                  "_description": "OBJECT \u2014 eCommerce action. Access: h.value:\"eCommerceAction\":\"action_type\"::STRING",
+                  "action_type": "STRING \u2014 1=list click, 2=detail view, 3=add to cart, 4=remove from cart, 5=checkout, 6=completed purchase, 7=refund."
+                }
+              }
+            },
+            "customDimensions": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of session-level custom dimensions. Use LATERAL FLATTEN, then access value:\"index\" and value:\"value\".",
+              "fields": {
+                "index": "INTEGER \u2014 Custom dimension index.",
+                "value": "STRING \u2014 Custom dimension value."
+              }
+            }
+          }
+        }
+      }
+    },
+    "GA4": {
+      "description": "Google Analytics 4 event-level data from an obfuscated sample ecommerce property. Each row represents one event.",
+      "tables": {
+        "GA4.GA4_OBFUSCATED_SAMPLE_ECOMMERCE.EVENTS": {
+          "description": "GA4 event-level analytics data. Each row is one event (page_view, purchase, session_start, etc.). Contains event parameters, item data, user properties, device info, and ecommerce data.",
+          "partition_info": "Daily partitioned as EVENTS_YYYYMMDD (range: 20201101\u201320210131). Query one representative table and filter with WHERE \"event_date\" >= 'YYYYMMDD'.",
+          "columns": {
+            "event_date": {
+              "type": "TEXT",
+              "description": "Event date in YYYYMMDD string format. Compare as strings: WHERE \"event_date\" >= '20201201'."
+            },
+            "event_timestamp": {
+              "type": "NUMBER",
+              "description": "Event time in microseconds UTC. Convert to timestamp: TO_TIMESTAMP(event_timestamp / 1000000)."
+            },
+            "event_name": {
+              "type": "TEXT",
+              "description": "Event name (e.g., 'page_view', 'session_start', 'purchase', 'add_to_cart', 'view_item', 'begin_checkout', 'scroll', 'click', 'first_visit', 'select_item')."
+            },
+            "event_previous_timestamp": {
+              "type": "NUMBER",
+              "description": "Previous event timestamp in microseconds UTC."
+            },
+            "event_value_in_usd": {
+              "type": "FLOAT",
+              "description": "Currency-converted event value in USD."
+            },
+            "event_bundle_sequence_id": {
+              "type": "NUMBER",
+              "description": "Sequential ID of the upload bundle."
+            },
+            "event_server_timestamp_offset": {
+              "type": "NUMBER",
+              "description": "Offset between collection and upload time in microseconds."
+            },
+            "user_id": {
+              "type": "TEXT",
+              "description": "Custom user ID assigned to the user."
+            },
+            "user_pseudo_id": {
+              "type": "TEXT",
+              "description": "Pseudonymous user ID (app instance ID). Primary user identifier for GA4."
+            },
+            "user_first_touch_timestamp": {
+              "type": "NUMBER",
+              "description": "Time (microseconds UTC) when user first opened the app or visited the site."
+            },
+            "is_active_user": {
+              "type": "BOOLEAN",
+              "description": "Whether the user was active during the calendar day."
+            },
+            "stream_id": {
+              "type": "TEXT",
+              "description": "Numeric ID of the data stream."
+            },
+            "platform": {
+              "type": "TEXT",
+              "description": "Platform: 'WEB', 'IOS', or 'ANDROID'."
+            },
+            "event_params": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of event parameters (key-value pairs). Use LATERAL FLATTEN, then access value:\"key\" and value:\"value\":\"string_value\" (or int_value, double_value). Common keys: 'page_location', 'page_title', 'page_referrer', 'source', 'medium', 'campaign', 'engagement_time_msec', 'ga_session_id', 'ga_session_number', 'engaged_session_event', 'entrances', 'session_engaged', 'page_view'.",
+              "fields": {
+                "key": "STRING \u2014 Parameter name.",
+                "value.string_value": "STRING \u2014 String parameter value.",
+                "value.int_value": "INTEGER \u2014 Integer parameter value.",
+                "value.double_value": "FLOAT \u2014 Double parameter value.",
+                "value.float_value": "FLOAT \u2014 Float parameter value (unused)."
+              }
+            },
+            "user_properties": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of user properties. Use LATERAL FLATTEN, then access value:\"key\" and value:\"value\":\"string_value\".",
+              "fields": {
+                "key": "STRING \u2014 Property name.",
+                "value.string_value": "STRING \u2014 String property value.",
+                "value.int_value": "INTEGER \u2014 Integer property value.",
+                "value.set_timestamp_micros": "INTEGER \u2014 When the property was last set."
+              }
+            },
+            "items": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of items associated with the event (ecommerce). Use LATERAL FLATTEN, then access value:\"field\". Used in gold SQL: FLATTEN(\"ITEMS\") i, then i.value:\"item_id\", i.value:\"item_name\", i.value:\"quantity\".",
+              "fields": {
+                "item_id": "STRING \u2014 Item ID.",
+                "item_name": "STRING \u2014 Item name.",
+                "item_brand": "STRING \u2014 Item brand.",
+                "item_variant": "STRING \u2014 Item variant.",
+                "item_category": "STRING \u2014 Item category.",
+                "item_category2": "STRING \u2014 Sub-category 2.",
+                "item_category3": "STRING \u2014 Sub-category 3.",
+                "item_category4": "STRING \u2014 Sub-category 4.",
+                "item_category5": "STRING \u2014 Sub-category 5.",
+                "price_in_usd": "FLOAT \u2014 Item price in USD.",
+                "price": "FLOAT \u2014 Item price in local currency.",
+                "quantity": "INTEGER \u2014 Quantity (default 1).",
+                "item_revenue_in_usd": "FLOAT \u2014 Item revenue in USD (purchase events only).",
+                "item_revenue": "FLOAT \u2014 Item revenue in local currency (purchase events only).",
+                "coupon": "STRING \u2014 Coupon code.",
+                "item_list_name": "STRING \u2014 Name of the list the item was shown in.",
+                "item_list_index": "STRING \u2014 Position in the list.",
+                "promotion_name": "STRING \u2014 Promotion name.",
+                "promotion_id": "STRING \u2014 Promotion ID."
+              }
+            },
+            "ecommerce": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Ecommerce event data. Access with t.\"ecommerce\":\"field\"::TYPE. Used in gold SQL: \"ECOMMERCE\":\"transaction_id\".",
+              "fields": {
+                "total_item_quantity": "INTEGER \u2014 Total items in the event.",
+                "purchase_revenue_in_usd": "FLOAT \u2014 Purchase revenue in USD (purchase events only).",
+                "purchase_revenue": "FLOAT \u2014 Purchase revenue in local currency.",
+                "refund_value_in_usd": "FLOAT \u2014 Refund value in USD.",
+                "refund_value": "FLOAT \u2014 Refund value in local currency.",
+                "shipping_value_in_usd": "FLOAT \u2014 Shipping cost in USD.",
+                "shipping_value": "FLOAT \u2014 Shipping cost in local currency.",
+                "tax_value_in_usd": "FLOAT \u2014 Tax in USD.",
+                "tax_value": "FLOAT \u2014 Tax in local currency.",
+                "transaction_id": "STRING \u2014 Transaction ID.",
+                "unique_items": "INTEGER \u2014 Number of unique items."
+              }
+            },
+            "device": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Device information. Access with t.\"device\":\"field\"::TYPE.",
+              "fields": {
+                "category": "STRING \u2014 Device category (mobile, tablet, desktop).",
+                "mobile_brand_name": "STRING \u2014 Device brand.",
+                "mobile_model_name": "STRING \u2014 Device model.",
+                "operating_system": "STRING \u2014 OS name.",
+                "operating_system_version": "STRING \u2014 OS version.",
+                "language": "STRING \u2014 Device language.",
+                "web_info.browser": "STRING \u2014 Browser name.",
+                "web_info.browser_version": "STRING \u2014 Browser version."
+              }
+            },
+            "geo": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Geographic location from IP. Access with t.\"geo\":\"field\"::TYPE.",
+              "fields": {
+                "continent": "STRING \u2014 Continent.",
+                "sub_continent": "STRING \u2014 Sub-continent.",
+                "country": "STRING \u2014 Country.",
+                "region": "STRING \u2014 Region.",
+                "metro": "STRING \u2014 Metro area.",
+                "city": "STRING \u2014 City."
+              }
+            },
+            "traffic_source": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Traffic source that first acquired the user. Access with t.\"traffic_source\":\"field\"::TYPE.",
+              "fields": {
+                "name": "STRING \u2014 Campaign name.",
+                "medium": "STRING \u2014 Medium (organic, cpc, etc.).",
+                "source": "STRING \u2014 Source network."
+              }
+            },
+            "collected_traffic_source": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Traffic source collected with the event. Access with t.\"collected_traffic_source\":\"field\"::TYPE.",
+              "fields": {
+                "manual_campaign_name": "STRING \u2014 UTM campaign name.",
+                "manual_source": "STRING \u2014 UTM source.",
+                "manual_medium": "STRING \u2014 UTM medium.",
+                "gclid": "STRING \u2014 Google click ID."
+              }
+            },
+            "privacy_info": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Consent status fields.",
+              "fields": {
+                "ads_storage": "STRING \u2014 Ad targeting enabled: 'Yes', 'No', 'Unset'.",
+                "analytics_storage": "STRING \u2014 Analytics storage enabled.",
+                "uses_transient_token": "STRING \u2014 Uses transient token."
+              }
+            },
+            "user_ltv": {
+              "type": "VARIANT",
+              "variant_kind": "OBJECT",
+              "description": "Lifetime value data. Not populated in intraday tables.",
+              "fields": {
+                "revenue": "FLOAT \u2014 Lifetime revenue.",
+                "currency": "STRING \u2014 Currency code."
+              }
+            }
+          }
+        }
+      }
+    },
+    "PATENTS": {
+      "description": "Google Patents Public Data on Snowflake. Contains patent publications, classification codes, citations, assignees, and inventors worldwide.",
+      "tables": {
+        "PATENTS.PATENTS.PUBLICATIONS": {
+          "description": "Patent publications worldwide. Each row is one publication. Contains bibliographic data, classification codes (CPC/IPC/USPC), inventors, assignees, citations, and text content. Most VARIANT columns are ARRAYs that require LATERAL FLATTEN.",
+          "columns": {
+            "publication_number": {
+              "type": "TEXT",
+              "description": "Unique publication identifier (e.g., 'US-7654321-B2', 'EP-1234567-A1'). Format: country-number-kind."
+            },
+            "application_number": {
+              "type": "TEXT",
+              "description": "Patent application number. Multiple publications can share the same application number."
+            },
+            "application_number_formatted": {
+              "type": "TEXT",
+              "description": "Formatted application number for display."
+            },
+            "country_code": {
+              "type": "TEXT",
+              "description": "Country of publication (e.g., 'US', 'EP', 'CA', 'DE', 'CN', 'JP'). Filter by this for jurisdiction-specific queries."
+            },
+            "kind_code": {
+              "type": "TEXT",
+              "description": "Publication kind: 'A1'=published application, 'A2'=republished application, 'B1'=granted patent (no prior publication), 'B2'=granted patent (with prior A1). 'B2' typically means a granted utility patent."
+            },
+            "application_kind": {
+              "type": "TEXT",
+              "description": "Type of application: 'A'=utility, 'F'=design, 'P'=plant. NOTE: This is NOT the patent classification (CPC/IPC). For classification codes use the 'cpc' or 'ipc' VARIANT arrays."
+            },
+            "family_id": {
+              "type": "TEXT",
+              "description": "Patent family ID linking related applications across jurisdictions. '-1' means no family assigned."
+            },
+            "filing_date": {
+              "type": "NUMBER",
+              "description": "Filing date as YYYYMMDD integer (e.g., 20100315). Compare as integers: WHERE \"filing_date\" >= 20100101 AND \"filing_date\" <= 20101231. Extract year: FLOOR(\"filing_date\" / 10000)."
+            },
+            "publication_date": {
+              "type": "NUMBER",
+              "description": "Publication date as YYYYMMDD integer. Same format as filing_date."
+            },
+            "grant_date": {
+              "type": "NUMBER",
+              "description": "Grant date as YYYYMMDD integer. Null if not yet granted."
+            },
+            "priority_date": {
+              "type": "NUMBER",
+              "description": "Earliest priority date as YYYYMMDD integer."
+            },
+            "entity_status": {
+              "type": "TEXT",
+              "description": "Patent entity status."
+            },
+            "art_unit": {
+              "type": "TEXT",
+              "description": "USPTO examining art unit."
+            },
+            "pct_number": {
+              "type": "TEXT",
+              "description": "PCT (Patent Cooperation Treaty) application number."
+            },
+            "spif_publication_number": {
+              "type": "TEXT",
+              "description": "Standardized publication number."
+            },
+            "spif_application_number": {
+              "type": "TEXT",
+              "description": "Standardized application number."
+            },
+            "cpc": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of CPC (Cooperative Patent Classification) codes. Use LATERAL FLATTEN(input => p.\"cpc\") c. Patent category queries (e.g., 'A61' for medical) filter on c.value:\"code\"::STRING LIKE 'A61%'. Gold SQL confirms this pattern.",
+              "fields": {
+                "code": "STRING \u2014 Full CPC code (e.g., 'A61K31/00'). Use SUBSTRING(code, 1, 4) for 4-digit level.",
+                "first": "BOOLEAN \u2014 True if this is the primary/main CPC code for the patent.",
+                "inventive": "BOOLEAN \u2014 True if this code relates to the inventive aspect.",
+                "tree": "STRING \u2014 CPC hierarchy tree path."
+              }
+            },
+            "ipc": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of IPC (International Patent Classification) codes. Same structure as cpc. Use LATERAL FLATTEN + value:\"code\"::STRING.",
+              "fields": {
+                "code": "STRING \u2014 Full IPC code.",
+                "first": "BOOLEAN \u2014 True if main IPC code.",
+                "inventive": "BOOLEAN \u2014 True if inventive.",
+                "tree": "STRING \u2014 IPC hierarchy tree."
+              }
+            },
+            "uspc": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of USPC (US Patent Classification) codes. Same structure as cpc/ipc.",
+              "fields": {
+                "code": "STRING \u2014 USPC code.",
+                "first": "BOOLEAN \u2014 True if main code.",
+                "inventive": "BOOLEAN \u2014 True if inventive.",
+                "tree": "STRING \u2014 USPC hierarchy."
+              }
+            },
+            "fi": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of FI (Japanese File Index) classification codes.",
+              "fields": {
+                "code": "STRING",
+                "first": "BOOLEAN",
+                "inventive": "BOOLEAN",
+                "tree": "STRING"
+              }
+            },
+            "fterm": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of F-term (Japanese) classification codes.",
+              "fields": {
+                "code": "STRING",
+                "first": "BOOLEAN",
+                "inventive": "BOOLEAN",
+                "tree": "STRING"
+              }
+            },
+            "locarno": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of Locarno (design) classification codes.",
+              "fields": {
+                "code": "STRING",
+                "first": "BOOLEAN",
+                "inventive": "BOOLEAN",
+                "tree": "STRING"
+              }
+            },
+            "inventor": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of inventor names as simple strings. Use LATERAL FLATTEN(input => p.\"inventor\") i, then i.value::STRING for the name. Count inventors per patent with COUNT(DISTINCT i.index)."
+            },
+            "inventor_harmonized": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of harmonized inventor records. Use LATERAL FLATTEN, then value:\"name\"::STRING and value:\"country_code\"::STRING.",
+              "fields": {
+                "name": "STRING \u2014 Harmonized inventor name.",
+                "country_code": "STRING \u2014 Inventor's country code."
+              }
+            },
+            "assignee": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of assignee (patent owner) names as simple strings. Use LATERAL FLATTEN(input => p.\"assignee\") a, then a.value::STRING. Used as fallback when assignee_harmonized is empty."
+            },
+            "assignee_harmonized": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of harmonized assignee records. Preferred over 'assignee' for analysis. Use LATERAL FLATTEN, then UPPER(TRIM(ah.value:\"name\"::STRING)) for normalized names. Gold SQL uses this pattern extensively.",
+              "fields": {
+                "name": "STRING \u2014 Harmonized assignee/company name.",
+                "country_code": "STRING \u2014 Assignee's country code."
+              }
+            },
+            "examiner": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of patent examiner records.",
+              "fields": {
+                "name": "STRING \u2014 Examiner name.",
+                "department": "STRING \u2014 Department.",
+                "level": "STRING \u2014 Examiner level."
+              }
+            },
+            "citation": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of patent citations (both backward and forward). Use LATERAL FLATTEN(input => p.\"citation\") c. Gold SQL pattern: c.value:publication_number::STRING to get cited patent numbers.",
+              "fields": {
+                "publication_number": "STRING \u2014 Cited patent publication number.",
+                "application_number": "STRING \u2014 Cited patent application number.",
+                "category": "STRING \u2014 Citation category.",
+                "type": "STRING \u2014 Citation type.",
+                "filing_date": "NUMBER \u2014 Filing date of cited patent (YYYYMMDD integer).",
+                "npl_text": "STRING \u2014 Non-patent literature citation text."
+              }
+            },
+            "priority_claim": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of priority claims.",
+              "fields": {
+                "publication_number": "STRING",
+                "application_number": "STRING",
+                "filing_date": "NUMBER",
+                "category": "STRING",
+                "type": "STRING"
+              }
+            },
+            "abstract_localized": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of localized abstracts. Use LATERAL FLATTEN, filter by value:\"language\"::STRING = 'en', access text with value:\"text\"::STRING. Gold SQL uses LOWER(abs.value:\"text\"::STRING) LIKE '%keyword%' for text search.",
+              "fields": {
+                "language": "STRING \u2014 Language code (e.g., 'en').",
+                "text": "STRING \u2014 Abstract text.",
+                "truncated": "BOOLEAN \u2014 Whether text was truncated."
+              }
+            },
+            "title_localized": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of localized titles. Same structure as abstract_localized.",
+              "fields": {
+                "language": "STRING",
+                "text": "STRING",
+                "truncated": "BOOLEAN"
+              }
+            },
+            "claims_localized": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of localized patent claims. Gold SQL uses FLATTEN + value:\"text\"::STRING with REGEXP_LIKE for keyword search in claims.",
+              "fields": {
+                "language": "STRING",
+                "text": "STRING",
+                "truncated": "BOOLEAN"
+              }
+            },
+            "description_localized": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of localized descriptions.",
+              "fields": {
+                "language": "STRING",
+                "text": "STRING",
+                "truncated": "BOOLEAN"
+              }
+            },
+            "claims_localized_html": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "HTML-formatted claims.",
+              "fields": {
+                "language": "STRING",
+                "text": "STRING",
+                "truncated": "BOOLEAN"
+              }
+            },
+            "description_localized_html": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "HTML-formatted descriptions.",
+              "fields": {
+                "language": "STRING",
+                "text": "STRING",
+                "truncated": "BOOLEAN"
+              }
+            },
+            "parent": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of parent patent relationships (continuations, divisionals).",
+              "fields": {
+                "publication_number": "STRING",
+                "application_number": "STRING",
+                "filing_date": "NUMBER",
+                "category": "STRING",
+                "type": "STRING"
+              }
+            },
+            "child": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Array of child patent relationships.",
+              "fields": {
+                "publication_number": "STRING",
+                "application_number": "STRING",
+                "filing_date": "NUMBER",
+                "category": "STRING",
+                "type": "STRING"
+              }
+            }
+          }
+        },
+        "PATENTS.PATENTS.DISCLOSURES_13": {
+          "description": "Standard Essential Patent (SEP) disclosure data from the 13 major Standard Setting Organizations (SSOs). Links patents to technical standards.",
+          "columns": {
+            "family_id": {
+              "type": "TEXT",
+              "description": "Patent family ID, links to PUBLICATIONS.family_id."
+            },
+            "record_id": {
+              "type": "TEXT",
+              "description": "Unique disclosure record ID."
+            },
+            "disclosure_event": {
+              "type": "TEXT",
+              "description": "Type of disclosure event."
+            },
+            "sso": {
+              "type": "TEXT",
+              "description": "Standard Setting Organization name."
+            },
+            "patent_owner_harmonized": {
+              "type": "TEXT",
+              "description": "Harmonized patent owner name."
+            },
+            "patent_owner_unharmonized": {
+              "type": "TEXT",
+              "description": "Original (unharmonized) patent owner name."
+            },
+            "date": {
+              "type": "NUMBER",
+              "description": "Disclosure date as YYYYMMDD integer."
+            },
+            "standard": {
+              "type": "TEXT",
+              "description": "Technical standard name."
+            },
+            "committee_project": {
+              "type": "TEXT",
+              "description": "Committee or project name."
+            },
+            "tc_name": {
+              "type": "TEXT",
+              "description": "Technical committee name."
+            },
+            "sc_name": {
+              "type": "TEXT",
+              "description": "Sub-committee name."
+            },
+            "wg_name": {
+              "type": "TEXT",
+              "description": "Working group name."
+            },
+            "licensing_commitment": {
+              "type": "TEXT",
+              "description": "FRAND licensing commitment type."
+            },
+            "copyright": {
+              "type": "TEXT",
+              "description": "Copyright info."
+            },
+            "blanket_type": {
+              "type": "TEXT",
+              "description": "Blanket disclosure type."
+            },
+            "blanket_scope": {
+              "type": "TEXT",
+              "description": "Blanket disclosure scope."
+            },
+            "third_party": {
+              "type": "TEXT",
+              "description": "Third-party disclosure indicator."
+            },
+            "reciprocity": {
+              "type": "TEXT",
+              "description": "Reciprocity conditions."
+            },
+            "serial_cleaned": {
+              "type": "TEXT",
+              "description": "Cleaned serial/application number."
+            },
+            "pub_cleaned": {
+              "type": "TEXT",
+              "description": "Cleaned publication number. Can be matched to PUBLICATIONS.publication_number."
+            }
+          }
+        },
+        "PATENTS.PATENTS.CPC_DEFINITION": {
+          "description": "CPC (Cooperative Patent Classification) hierarchy definitions. Each row defines one CPC symbol with its title, relationships, and references.",
+          "columns": {
+            "symbol": {
+              "type": "TEXT",
+              "description": "CPC classification symbol (e.g., 'A61K', 'H01L')."
+            },
+            "titleFull": {
+              "type": "TEXT",
+              "description": "Full human-readable title of the CPC symbol."
+            },
+            "level": {
+              "type": "FLOAT",
+              "description": "Hierarchy depth level."
+            },
+            "status": {
+              "type": "TEXT",
+              "description": "Symbol status (active, deleted, etc.)."
+            },
+            "ipcConcordant": {
+              "type": "TEXT",
+              "description": "Corresponding IPC code."
+            },
+            "notAllocatable": {
+              "type": "BOOLEAN",
+              "description": "True if this symbol cannot be directly assigned to patents."
+            },
+            "breakdownCode": {
+              "type": "BOOLEAN",
+              "description": "True if this is a breakdown code."
+            },
+            "definition": {
+              "type": "VARIANT",
+              "description": "Definition text (VARIANT ARRAY)."
+            },
+            "children": {
+              "type": "VARIANT",
+              "description": "Child symbols (VARIANT ARRAY)."
+            },
+            "parents": {
+              "type": "VARIANT",
+              "description": "Parent symbols (VARIANT ARRAY)."
+            },
+            "applicationReferences": {
+              "type": "VARIANT",
+              "description": "Application references (VARIANT ARRAY with fields: description, target)."
+            },
+            "limitingReferences": {
+              "type": "VARIANT",
+              "description": "Limiting references."
+            },
+            "informativeReferences": {
+              "type": "VARIANT",
+              "description": "Informative references."
+            },
+            "residualReferences": {
+              "type": "VARIANT",
+              "description": "Residual references."
+            },
+            "scopeLimitingReferences": {
+              "type": "VARIANT",
+              "description": "Scope-limiting references."
+            },
+            "precedenceLimitingReferences": {
+              "type": "VARIANT",
+              "description": "Precedence-limiting references."
+            },
+            "glossary": {
+              "type": "VARIANT",
+              "description": "Glossary entries."
+            },
+            "synonyms": {
+              "type": "VARIANT",
+              "description": "Synonym entries."
+            },
+            "rules": {
+              "type": "VARIANT",
+              "description": "Classification rules."
+            },
+            "childGroups": {
+              "type": "VARIANT",
+              "description": "Child group definitions."
+            },
+            "titlePart": {
+              "type": "VARIANT",
+              "description": "Title parts."
+            },
+            "dateRevised": {
+              "type": "FLOAT",
+              "description": "Last revision date."
+            }
+          }
+        }
+      }
+    },
+    "PATENTS_GOOGLE": {
+      "description": "Google Patents Research data including text embeddings, similarity scores, and enriched patent metadata.",
+      "tables": {
+        "PATENTS_GOOGLE.PATENTS_GOOGLE.PUBLICATIONS": {
+          "description": "Patent publications with the same structure as PATENTS.PATENTS.PUBLICATIONS but in the PATENTS_GOOGLE database context. Contains publication_number, filing_date, grant_date, country_code, kind_code, family_id, cpc, ipc, assignee_harmonized, citation, etc.",
+          "columns": {
+            "publication_number": {
+              "type": "TEXT",
+              "description": "Unique publication identifier (e.g., 'US-9741766-B2')."
+            },
+            "application_number": {
+              "type": "TEXT",
+              "description": "Patent application number."
+            },
+            "country_code": {
+              "type": "TEXT",
+              "description": "Country of publication."
+            },
+            "kind_code": {
+              "type": "TEXT",
+              "description": "Publication kind (A1, B1, B2, etc.)."
+            },
+            "application_kind": {
+              "type": "TEXT",
+              "description": "Application type: 'A'=utility, 'F'=design, 'P'=plant."
+            },
+            "family_id": {
+              "type": "TEXT",
+              "description": "Patent family ID."
+            },
+            "filing_date": {
+              "type": "NUMBER",
+              "description": "Filing date as YYYYMMDD integer."
+            },
+            "publication_date": {
+              "type": "NUMBER",
+              "description": "Publication date as YYYYMMDD integer."
+            },
+            "grant_date": {
+              "type": "NUMBER",
+              "description": "Grant date as YYYYMMDD integer."
+            },
+            "priority_date": {
+              "type": "NUMBER",
+              "description": "Priority date as YYYYMMDD integer."
+            },
+            "cpc": {
+              "type": "VARIANT",
+              "description": "ARRAY of CPC codes. Use LATERAL FLATTEN + value:\"code\"::STRING. Same structure as PATENTS.PUBLICATIONS.cpc."
+            },
+            "ipc": {
+              "type": "VARIANT",
+              "description": "ARRAY of IPC codes."
+            },
+            "citation": {
+              "type": "VARIANT",
+              "description": "ARRAY of citations. value:publication_number::STRING for cited patent."
+            },
+            "assignee_harmonized": {
+              "type": "VARIANT",
+              "description": "ARRAY of harmonized assignees. value:\"name\"::STRING."
+            },
+            "inventor_harmonized": {
+              "type": "VARIANT",
+              "description": "ARRAY of harmonized inventors. value:\"name\"::STRING."
+            },
+            "title": {
+              "type": "TEXT",
+              "description": "Patent title."
+            },
+            "abstract": {
+              "type": "TEXT",
+              "description": "Patent abstract text."
+            }
+          }
+        },
+        "PATENTS_GOOGLE.PATENTS_GOOGLE.ABS_AND_EMB": {
+          "description": "Patent abstracts with text embeddings for similarity computation. Contains pre-computed embedding vectors and similar patent lists.",
+          "columns": {
+            "publication_number": {
+              "type": "TEXT",
+              "description": "Publication number. Join with PUBLICATIONS on this column."
+            },
+            "title": {
+              "type": "TEXT",
+              "description": "Patent title."
+            },
+            "title_translated": {
+              "type": "TEXT",
+              "description": "Translated patent title."
+            },
+            "abstract": {
+              "type": "TEXT",
+              "description": "Patent abstract."
+            },
+            "abstract_translated": {
+              "type": "TEXT",
+              "description": "Translated patent abstract."
+            },
+            "url": {
+              "type": "TEXT",
+              "description": "URL to the patent."
+            },
+            "country": {
+              "type": "TEXT",
+              "description": "Country code."
+            },
+            "publication_description": {
+              "type": "TEXT",
+              "description": "Description of publication type."
+            },
+            "cpc": {
+              "type": "VARIANT",
+              "description": "CPC codes."
+            },
+            "cpc_low": {
+              "type": "VARIANT",
+              "description": "Low-level CPC codes."
+            },
+            "cpc_inventive_low": {
+              "type": "VARIANT",
+              "description": "Inventive CPC codes."
+            },
+            "top_terms": {
+              "type": "VARIANT",
+              "description": "Top terms extracted from the patent."
+            },
+            "similar": {
+              "type": "VARIANT",
+              "description": "ARRAY of similar patents with similarity scores. Use LATERAL FLATTEN."
+            },
+            "embedding_v1": {
+              "type": "VARIANT",
+              "variant_kind": "ARRAY",
+              "description": "Text embedding vector (ARRAY of FLOATs). Use LATERAL FLATTEN to access individual dimensions. Compute similarity between patents using dot product of their embedding vectors. Gold SQL: FLATTEN(embedding_v1) f, then f.value::FLOAT."
+            },
+            "cited_by": {
+              "type": "VARIANT",
+              "description": "ARRAY of patents that cite this patent (forward citations)."
+            }
+          }
+        },
+        "PATENTS_GOOGLE.PATENTS_GOOGLE.CPC_DEFINITION": {
+          "description": "Same structure as PATENTS.PATENTS.CPC_DEFINITION. CPC hierarchy definitions.",
+          "columns": {
+            "symbol": {
+              "type": "TEXT",
+              "description": "CPC symbol."
+            },
+            "titleFull": {
+              "type": "TEXT",
+              "description": "Full title."
+            }
+          }
+        },
+        "PATENTS_GOOGLE.PATENTS_GOOGLE.DISCLOSURES_13": {
+          "description": "Same structure as PATENTS.PATENTS.DISCLOSURES_13. SEP disclosure data.",
+          "columns": {
+            "family_id": {
+              "type": "TEXT",
+              "description": "Patent family ID."
+            },
+            "pub_cleaned": {
+              "type": "TEXT",
+              "description": "Cleaned publication number."
+            }
+          }
+        }
+      }
+    }
+  }
+}

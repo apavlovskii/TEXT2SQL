@@ -20,6 +20,8 @@ class TraceRecord:
     verification_summary: str | None = None
     tables_used: list[str] = field(default_factory=list)
     key_columns_used: list[str] = field(default_factory=list)
+    join_conditions: list[str] = field(default_factory=list)
+    column_access_patterns: list[str] = field(default_factory=list)
     token_estimate: int | None = None
 
     def to_dict(self) -> dict:
@@ -105,6 +107,27 @@ def make_trace_record(
             for c in ts.columns:
                 if c.is_join_key or c.is_time_column:
                     key_cols.append(f"{ts.qualified_name}.{c.name}")
+    # Extract join conditions from plan
+    join_conditions = []
+    if plan and hasattr(plan, "joins"):
+        for j in plan.joins:
+            join_conditions.append(
+                f"{j.left_table}.{j.left_column} = {j.right_table}.{j.right_column}"
+            )
+
+    # Extract VARIANT access patterns from SQL (e.g., "trafficSource":"source"::STRING)
+    import re
+    column_access_patterns = []
+    if final_sql:
+        # Match "col":"field" or "col":"field"::TYPE patterns
+        variant_re = re.compile(r'"(\w+)":"(\w+)"(?:::(\w+))?')
+        for m in variant_re.finditer(final_sql):
+            pattern = f'"{m.group(1)}":"{m.group(2)}"'
+            if m.group(3):
+                pattern += f"::{m.group(3)}"
+            if pattern not in column_access_patterns:
+                column_access_patterns.append(pattern)
+
     # Truncate SQL for storage
     sql_compact = final_sql[:500] if final_sql else ""
     return TraceRecord(
@@ -126,4 +149,6 @@ def make_trace_record(
         ),
         tables_used=tables_used,
         key_columns_used=key_cols,
+        join_conditions=join_conditions,
+        column_access_patterns=column_access_patterns,
     )

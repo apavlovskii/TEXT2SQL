@@ -1,9 +1,9 @@
 # Default configuration for rag_snow_agent.
 
 retrieval:
-  top_k_tables: 8
-  top_k_columns: 25
-  max_schema_tokens: 2500
+  top_k_tables: 25
+  top_k_columns: 100
+  max_schema_tokens: 10000
   rrf_k: 60
 
 llm:
@@ -14,7 +14,21 @@ llm:
 agent:
   plan_retry_limit: 1
   validation_fix_limit: 1
+  decompose_questions: true
 
 indexing:
   gold_sql_dir: Spider2/spider2-snow/evaluation_suite/gold/sql/
   ingest_gold_joins: true
+
+semantic_layer:
+  enabled: true
+  collection_name: semantic_cards
+  max_prompt_tokens: 800
+  max_probe_budget: 10
+  min_confidence: 0.45
+  retrieval_top_k: 8
+
+sample_records:
+  enabled: true
+  max_prompt_tokens: 800
+  max_rows_per_table: 2

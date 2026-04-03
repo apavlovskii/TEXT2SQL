@@ -26,6 +26,9 @@ class ColumnSlice:
     is_join_key: bool = False
     is_time_column: bool = False
     is_variant: bool = False
+    variant_kind: str | None = None  # "ARRAY" | "OBJECT" | None — structure of the VARIANT
+    variant_fields: list[str] | None = None  # known nested field paths (e.g. ["page.pagePath", "productRevenue"])
+    date_format: str | None = None  # explicit format hint (e.g. "YYYYMMDD string", "YYYYMMDD integer")
 
 
 @dataclass
@@ -65,9 +68,31 @@ class SchemaSlice:
             lines.append(header)
             for col in ts.columns:
                 dtype_display = col.data_type
+                annotation = ""
                 if col.is_variant:
-                    dtype_display += " (VARIANT — use :field path)"
-                parts = [f"  {col.name} {dtype_display}"]
+                    if col.variant_kind == "ARRAY":
+                        annotation = (
+                            " ARRAY — use LATERAL FLATTEN(input => t.\"{}\")"
+                            " alias, then alias.value:\"field\"::TYPE"
+                        ).format(col.original_name or col.name)
+                    elif col.variant_kind == "OBJECT":
+                        annotation = (
+                            " OBJECT — access with t.\"{}\":\"field\"::TYPE"
+                        ).format(col.original_name or col.name)
+                    else:
+                        annotation = " (VARIANT — use :field path or LATERAL FLATTEN for arrays)"
+                    if col.variant_fields:
+                        fields_str = ", ".join(col.variant_fields[:8])
+                        annotation += f" [fields: {fields_str}]"
+                if col.is_time_column and col.date_format:
+                    fmt = col.date_format
+                    if "integer" in fmt.lower():
+                        annotation += f" — date as integer ({fmt}), compare with integers e.g. >= 20170201"
+                    elif "string" in fmt.lower():
+                        annotation += f" — date as string ({fmt}), compare with string literals e.g. >= '20170201'"
+                    else:
+                        annotation += f" — {fmt}"
+                parts = [f"  {col.name} {dtype_display}{annotation}"]
                 if col.comment:
                     parts.append(f"-- {col.comment}")
                 lines.append(" ".join(parts))

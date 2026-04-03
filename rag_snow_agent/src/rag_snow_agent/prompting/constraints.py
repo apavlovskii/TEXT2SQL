@@ -93,6 +93,9 @@ def validate_sql(sql: str, schema_slice: SchemaSlice) -> ValidationResult:
 
         if len(parts) == 2:
             table_or_alias, column = parts
+            # Skip FLATTEN alias references (e.g. h.VALUE, ah.VALUE)
+            if column == "VALUE":
+                continue
             # Skip alias references (t1, t2, ...) — they are compiler-generated
             if re.match(r"^T\d+$", table_or_alias):
                 # Validate column exists in any selected table

@@ -89,6 +89,9 @@ def solve_instance(
     chroma_store: ChromaStore | None = None,
     gold_dir: str | Path | None = None,
     max_same_error_type: int = 3,
+    semantic_context: str | None = None,
+    decompose: bool = False,
+    sample_context: str | None = None,
 ) -> InstanceResult:
     """Solve one instance.
 
@@ -121,6 +124,9 @@ def solve_instance(
             gold_dir=gold_dir,
             eval_standards=_eval_standards,
             max_same_error_type=max_same_error_type,
+            semantic_context=semantic_context,
+            decompose=decompose,
+            sample_context=sample_context,
         )
         if memory_enabled and result.success:
             _persist_trace(
@@ -149,6 +155,9 @@ def solve_instance(
         gold_dir=gold_dir,
         eval_standards=_eval_standards,
         max_same_error_type=max_same_error_type,
+        semantic_context=semantic_context,
+        decompose=decompose,
+        sample_context=sample_context,
     )
     if memory_enabled and result.success:
         _persist_trace(
@@ -181,6 +190,9 @@ def _solve_single(
     gold_dir: str | Path | None = None,
     eval_standards: dict | None = None,
     max_same_error_type: int = 3,
+    semantic_context: str | None = None,
+    decompose: bool = False,
+    sample_context: str | None = None,
 ) -> InstanceResult:
     """Single-candidate flow (Milestone 4)."""
     result = InstanceResult(
@@ -200,6 +212,9 @@ def _solve_single(
         temperature=temperature,
         max_tokens=max_tokens,
         retriever=retriever,
+        semantic_context=semantic_context,
+        decompose=decompose,
+        sample_context=sample_context,
     )
     result.pipeline_result = pipeline_result
     result.llm_calls += pipeline_result.llm_calls
@@ -227,6 +242,7 @@ def _solve_single(
         eval_standards=eval_standards,
         instance_id=instance_id,
         max_same_error_type=max_same_error_type,
+        sample_context=sample_context,
     )
 
     result.final_sql = final_sql
@@ -266,6 +282,9 @@ def _solve_best_of_n(
     gold_dir: str | Path | None = None,
     eval_standards: dict | None = None,
     max_same_error_type: int = 3,
+    semantic_context: str | None = None,
+    decompose: bool = False,
+    sample_context: str | None = None,
 ) -> InstanceResult:
     """Best-of-N flow (Milestone 5)."""
     bon_result = run_best_of_n(
@@ -287,6 +306,9 @@ def _solve_best_of_n(
         gold_dir=gold_dir,
         eval_standards=eval_standards,
         max_same_error_type=max_same_error_type,
+        semantic_context=semantic_context,
+        decompose=decompose,
+        sample_context=sample_context,
     )
 
     # Summarize candidates (without heavy data like rows_sample)

@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-03-29T12:30:23.650738+00:00",
-  "git_commit": "802ced0efd6ee599bf3386ff3cad706cd50e20a5",
+  "timestamp": "2026-03-29T17:36:01.670194+00:00",
+  "git_commit": "c5854567df1a92497f44852e1679c57acc9a9c25",
   "experiment": "benchmark_run_4",
   "model": "gpt-5.4",
   "limit": 25,
@@ -27,12 +27,21 @@
     "agent": {
       "plan_retry_limit": 1,
       "validation_fix_limit": 1,
+      "decompose_questions": true,
       "best_of_n": 3,
-      "max_repairs": 5
+      "max_repairs": 3
     },
     "indexing": {
       "gold_sql_dir": "Spider2/spider2-snow/evaluation_suite/gold/sql/",
       "ingest_gold_joins": true
+    },
+    "semantic_layer": {
+      "enabled": true,
+      "collection_name": "semantic_cards",
+      "max_prompt_tokens": 800,
+      "max_probe_budget": 10,
+      "min_confidence": 0.45,
+      "retrieval_top_k": 8
     },
     "features": {}
   }

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..retrieval.schema_slice import SchemaSlice
-from .plan_schema import QueryPlan
+from .plan_schema import PlanCTE, PlanFlatten, QueryPlan
 
 
 def _alias(idx: int) -> str:
@@ -49,27 +49,64 @@ def _resolve_column(
     return f'{alias}."{col_name}"'
 
 
-def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> str:
-    """Compile a QueryPlan into a Snowflake SQL string.
+def _compile_flatten_from(
+    flatten_ops: list[PlanFlatten],
+    alias_map: dict[str, str],
+) -> list[str]:
+    """Generate LATERAL FLATTEN clause fragments for FROM."""
+    parts: list[str] = []
+    for f in flatten_ops:
+        table_alias = alias_map.get(f.table, f.table)
+        parts.append(
+            f', LATERAL FLATTEN(input => {table_alias}."{f.variant_column}") {f.alias}'
+        )
+    return parts
 
-    Uses CTE style with stable aliases t1, t2, ...
+
+def _resolve_column_or_flatten(
+    table: str,
+    column: str,
+    alias_map: dict[str, str],
+    case_map: dict[str, dict[str, str]] | None = None,
+    flatten_aliases: set[str] | None = None,
+) -> str:
+    """Resolve a column reference, handling FLATTEN alias.value:"field" syntax.
+
+    If *table* matches a FLATTEN alias (e.g. "h") and *column* contains a dot
+    (e.g. "page.pagePath"), emit ``h.value:"page":"pagePath"`` syntax.
+    If *column* has no dot, emit ``h.value:"column"`` syntax.
+    Otherwise fall through to normal resolution.
     """
-    if not plan.selected_tables:
-        return "SELECT 1"
+    if flatten_aliases and table in flatten_aliases:
+        # column might be "page.pagePath" or just "productRevenue"
+        field_parts = column.split(".")
+        path = "".join(f':"{p}"' for p in field_parts)
+        return f"{table}.value{path}"
+    return _resolve_column(table, column, alias_map, case_map)
 
-    # Build alias map: qualified_name -> t1, t2, ...
-    alias_map: dict[str, str] = {}
-    for i, tname in enumerate(plan.selected_tables):
-        alias_map[tname] = _alias(i)
 
-    # Build column case map from SchemaSlice (for original casing)
-    case_map = _build_column_case_map(schema_slice)
+def _compile_single_block(
+    selected_tables: list[str],
+    joins: list,
+    flatten_ops: list[PlanFlatten],
+    filters: list,
+    group_by: list[str],
+    aggregations: list,
+    order_by: list,
+    limit: int | None,
+    alias_map: dict[str, str],
+    case_map: dict[str, dict[str, str]] | None,
+) -> str:
+    """Compile a single SELECT block (used for main query and each CTE)."""
+    flatten_aliases: set[str] = {f.alias for f in flatten_ops}
 
     # ── FROM / JOIN clause ──────────────────────────────────────────────
-    primary = plan.selected_tables[0]
-    from_parts = [f"{primary} AS {alias_map[primary]}"]
+    if not selected_tables:
+        return "SELECT 1"
+    primary = selected_tables[0]
+    from_parts = [f"{primary} AS {alias_map.get(primary, primary)}"]
 
-    for j in plan.joins:
+    for j in joins:
         jtype = j.join_type.upper()
         right_alias = alias_map.get(j.right_table, j.right_table)
         left_ref = _resolve_column(j.left_table, j.left_column, alias_map, case_map)
@@ -79,25 +116,36 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
             f"ON {left_ref} = {right_ref}"
         )
 
+    # LATERAL FLATTEN clauses
+    from_parts.extend(_compile_flatten_from(flatten_ops, alias_map))
+
     from_clause = "\n".join(from_parts)
 
     # ── SELECT clause ───────────────────────────────────────────────────
     select_parts: list[str] = []
 
     # Group-by columns first
-    for gb in plan.group_by:
+    for gb in group_by:
         if "." in gb:
-            parts = gb.rsplit(".", 1)
-            table_part, col_part = parts[0], parts[1]
-            # table_part could be "TABLE" (short) or fully qualified
-            resolved = _try_resolve(table_part, col_part, alias_map)
+            # Check if the first segment is a flatten alias (e.g. "h.page.pagePath")
+            first_seg = gb.split(".", 1)[0]
+            if first_seg in flatten_aliases:
+                table_part = first_seg
+                col_part = gb.split(".", 1)[1]  # "page.pagePath"
+            else:
+                table_part, col_part = gb.rsplit(".", 1)
+            resolved = _resolve_column_or_flatten(
+                table_part, col_part, alias_map, case_map, flatten_aliases
+            )
             select_parts.append(resolved)
         else:
             select_parts.append(gb)
 
     # Aggregations
-    for agg in plan.aggregations:
-        col_ref = _resolve_column(agg.table, agg.column, alias_map, case_map)
+    for agg in aggregations:
+        col_ref = _resolve_column_or_flatten(
+            agg.table, agg.column, alias_map, case_map, flatten_aliases
+        )
         if agg.func.upper() == "COUNT_DISTINCT":
             expr = f"COUNT(DISTINCT {col_ref})"
         elif agg.func.upper() == "COUNT" and agg.column == "*":
@@ -108,14 +156,17 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
 
     if not select_parts:
         # Fallback: select all columns from first table
-        select_parts.append(f"{alias_map[primary]}.*")
+        first_alias = alias_map.get(primary, primary)
+        select_parts.append(f"{first_alias}.*")
 
     select_clause = ",\n  ".join(select_parts)
 
     # ── WHERE clause ────────────────────────────────────────────────────
     where_parts: list[str] = []
-    for f in plan.filters:
-        col_ref = _resolve_column(f.table, f.column, alias_map, case_map)
+    for f in filters:
+        col_ref = _resolve_column_or_flatten(
+            f.table, f.column, alias_map, case_map, flatten_aliases
+        )
         op = f.op.upper()
         if op in ("IS NULL", "IS NOT NULL"):
             where_parts.append(f"{col_ref} {op}")
@@ -124,7 +175,6 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
         elif op == "BETWEEN" and f.value is not None:
             where_parts.append(f"{col_ref} BETWEEN {f.value}")
         elif f.value is not None:
-            # Quote string values; leave numeric/function values unquoted
             val = f.value
             where_parts.append(f"{col_ref} {op} {val}")
         else:
@@ -134,21 +184,26 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
 
     # ── GROUP BY clause ─────────────────────────────────────────────────
     group_parts: list[str] = []
-    for gb in plan.group_by:
+    for gb in group_by:
         if "." in gb:
-            parts = gb.rsplit(".", 1)
-            resolved = _try_resolve(parts[0], parts[1], alias_map)
+            first_seg = gb.split(".", 1)[0]
+            if first_seg in flatten_aliases:
+                table_part = first_seg
+                col_part = gb.split(".", 1)[1]
+            else:
+                table_part, col_part = gb.rsplit(".", 1)
+            resolved = _resolve_column_or_flatten(
+                table_part, col_part, alias_map, case_map, flatten_aliases
+            )
             group_parts.append(resolved)
         else:
-            # Bare name (no dot) — likely an alias, don't double-quote
             group_parts.append(gb)
 
     group_clause = ", ".join(group_parts) if group_parts else ""
 
     # ── ORDER BY clause ─────────────────────────────────────────────────
-    # ORDER BY expressions are aliases or positional — do NOT double-quote
     order_parts: list[str] = []
-    for ob in plan.order_by:
+    for ob in order_by:
         direction = ob.direction.upper()
         order_parts.append(f"{ob.expr} {direction}")
 
@@ -162,10 +217,98 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
         sql_lines.append(f"GROUP BY {group_clause}")
     if order_clause:
         sql_lines.append(f"ORDER BY {order_clause}")
-    if plan.limit is not None:
-        sql_lines.append(f"LIMIT {plan.limit}")
+    if limit is not None:
+        sql_lines.append(f"LIMIT {limit}")
 
     return "\n".join(sql_lines)
+
+
+def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> str:
+    """Compile a QueryPlan into a Snowflake SQL string.
+
+    Supports LATERAL FLATTEN for VARIANT ARRAYs and multi-step CTEs.
+    """
+    if not plan.selected_tables:
+        return "SELECT 1"
+
+    # Build alias map: qualified_name -> t1, t2, ...
+    alias_map: dict[str, str] = {}
+    for i, tname in enumerate(plan.selected_tables):
+        alias_map[tname] = _alias(i)
+
+    # Build column case map from SchemaSlice (for original casing)
+    case_map = _build_column_case_map(schema_slice)
+
+    # ── CTE-based compilation ───────────────────────────────────────────
+    if plan.ctes:
+        cte_parts: list[str] = []
+        for cte in plan.ctes:
+            # Build local alias map for tables referenced inside this CTE.
+            # CTE source can be an upstream CTE name (no alias needed for those)
+            # or a real table from selected_tables (use existing alias).
+            cte_alias_map = dict(alias_map)
+            for tbl in cte.selected_tables:
+                if tbl not in cte_alias_map:
+                    # Upstream CTE name — reference directly
+                    cte_alias_map[tbl] = tbl
+
+            block = _compile_single_block(
+                selected_tables=cte.selected_tables,
+                joins=cte.joins,
+                flatten_ops=cte.flatten_ops,
+                filters=cte.filters,
+                group_by=cte.group_by,
+                aggregations=cte.aggregations,
+                order_by=cte.order_by,
+                limit=cte.limit,
+                alias_map=cte_alias_map,
+                case_map=case_map,
+            )
+            cte_parts.append(f"{cte.name} AS (\n{block}\n)")
+
+        # Final SELECT: use the last CTE as source by default
+        last_cte = plan.ctes[-1].name
+
+        # If there are top-level aggregations/group_by/filters, build a final
+        # SELECT from the last CTE. Otherwise just SELECT * FROM last_cte.
+        if plan.aggregations or plan.group_by or plan.filters:
+            final_alias_map = {last_cte: last_cte}
+            final_block = _compile_single_block(
+                selected_tables=[last_cte],
+                joins=[],
+                flatten_ops=[],
+                filters=plan.filters,
+                group_by=plan.group_by,
+                aggregations=plan.aggregations,
+                order_by=plan.order_by,
+                limit=plan.limit,
+                alias_map=final_alias_map,
+                case_map=None,
+            )
+        else:
+            final_parts = [f"SELECT *\nFROM {last_cte}"]
+            if plan.order_by:
+                ob = ", ".join(f"{o.expr} {o.direction.upper()}" for o in plan.order_by)
+                final_parts.append(f"ORDER BY {ob}")
+            if plan.limit is not None:
+                final_parts.append(f"LIMIT {plan.limit}")
+            final_block = "\n".join(final_parts)
+
+        return "WITH " + ",\n".join(cte_parts) + "\n" + final_block
+
+    # ── Single-block compilation (no CTEs) ──────────────────────────────
+    return _compile_single_block(
+        selected_tables=plan.selected_tables,
+        joins=plan.joins,
+        flatten_ops=plan.flatten_ops,
+        filters=plan.filters,
+        group_by=plan.group_by,
+        aggregations=plan.aggregations,
+        order_by=plan.order_by,
+        limit=plan.limit,
+        alias_map=alias_map,
+        case_map=case_map,
+    )
 
 
 def _try_resolve(table_part: str, col_part: str, alias_map: dict[str, str]) -> str:

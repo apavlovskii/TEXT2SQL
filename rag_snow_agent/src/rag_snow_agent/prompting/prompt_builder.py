@@ -26,7 +26,8 @@ Snowflake SQL rules:
 - For VARIANT/ARRAY columns, use LATERAL FLATTEN:
   SELECT f.value:"field"::STRING FROM table, LATERAL FLATTEN(input => table."variant_col") f
 - Access VARIANT nested fields with colon: "col":"field"::TYPE
-- Snowflake treats unquoted identifiers as UPPERCASE — always quote mixed-case or lowercase columns.\
+- Snowflake treats unquoted identifiers as UPPERCASE — always quote mixed-case or lowercase columns.
+- GA360 revenue fields (totalTransactionRevenue, productRevenue, transactionRevenue) are stored multiplied by 10^6. ALWAYS divide by 1000000 to get USD values.\
 """
 
 # ── Plan prompt ─────────────────────────────────────────────────────────────
@@ -39,6 +40,10 @@ Rules:
 - Use ONLY tables and columns listed in the schema below.
 - Return ONLY valid JSON matching the schema specification. No markdown, no explanation.
 - The plan must be sufficient to generate a correct Snowflake SQL query.
+- When a column is marked ARRAY in the schema, you MUST add a flatten_ops entry. \
+Do NOT access VARIANT ARRAY columns directly — they require LATERAL FLATTEN.
+- When the question requires multi-step logic (find top X, then query X; set operations; \
+multi-level aggregation), use the "ctes" array to build a pipeline of steps.
 
 {snowflake_guidance}
 
@@ -46,13 +51,29 @@ Plan JSON schema:
 {{
   "selected_tables": ["DB.SCHEMA.TABLE", ...],
   "joins": [{{"left_table": "...", "left_column": "...", "right_table": "...", "right_column": "...", "join_type": "INNER"}}],
+  "flatten_ops": [{{"table": "DB.SCHEMA.TABLE", "variant_column": "hits", "alias": "h", "extract_fields": ["page.pagePath", "productRevenue"]}}],
   "filters": [{{"table": "...", "column": "...", "op": "=", "value": "..."}}],
   "group_by": ["table.column", ...],
   "aggregations": [{{"func": "COUNT", "table": "...", "column": "...", "alias": "..."}}],
   "order_by": [{{"expr": "...", "direction": "ASC"}}],
   "limit": null,
+  "ctes": [{{"name": "step_name", "description": "what this step computes", "selected_tables": [...], "joins": [...], "flatten_ops": [...], "filters": [...], "group_by": [...], "aggregations": [...], "order_by": [...], "limit": null}}],
   "notes": null
-}}\
+}}
+
+flatten_ops usage:
+- "table": the qualified table name containing the VARIANT ARRAY column
+- "variant_column": the exact column name (e.g. "hits", "assignee_harmonized")
+- "alias": short alias (e.g. "h", "ah") — use this alias as "table" in filters/aggregations
+- "extract_fields": nested paths to extract (e.g. "page.pagePath" becomes value:"page":"pagePath")
+- When referencing flattened data in filters/aggregations, set table to the flatten alias \
+and column to the nested field path (e.g. table="h", column="page.pagePath")
+
+ctes usage:
+- Each CTE is an independent query step, compiled as WITH name AS (SELECT ...)
+- The final SELECT reads from the last CTE
+- CTE selected_tables can reference upstream CTE names or real tables
+- Use ctes for multi-step logic; leave empty [] for simple single-step queries\
 """
 
 _PLAN_USER = """\
@@ -172,6 +193,9 @@ def build_plan_prompt(
     schema_slice: SchemaSlice,
     memory_context: str | None = None,
     join_hints: list[str] | None = None,
+    semantic_context: str | None = None,
+    decomposition_context: str | None = None,
+    sample_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Return messages list for the plan-generation LLM call."""
     schema_text = schema_slice.format_for_prompt()
@@ -180,6 +204,12 @@ def build_plan_prompt(
     user_content = _PLAN_USER.format(
         schema_text=schema_text, instruction=instruction
     )
+    if sample_context:
+        user_content = sample_context + "\n\n" + user_content
+    if semantic_context:
+        user_content = semantic_context + "\n\n" + user_content
+    if decomposition_context:
+        user_content = decomposition_context + "\n\n" + user_content
     if memory_context:
         user_content = memory_context + "\n\n" + user_content
     return [
@@ -255,6 +285,22 @@ _STRATEGY_HINTS: dict[str, str] = {
         "time-based grouping the question implies. Locate the relevant "
         "DATE/TIMESTAMP columns first, then build the rest of the query around them."
     ),
+    "flatten_first": (
+        "\nPlanning priority: START by identifying VARIANT/ARRAY columns that need "
+        "LATERAL FLATTEN. Look at columns marked ARRAY in the schema — these MUST "
+        "use flatten_ops to access nested data. For each VARIANT ARRAY column you "
+        "need, add a flatten_ops entry with the table, variant_column, an alias, "
+        "and the extract_fields you need. Then reference the flatten alias in "
+        "filters, group_by, and aggregations (e.g. table='h', column='page.pagePath')."
+    ),
+    "cte_first": (
+        "\nPlanning priority: START by breaking the question into sequential steps. "
+        "Each step becomes a CTE in the 'ctes' array. Build a pipeline: "
+        "Step 1 filters base data, Step 2 aggregates, Step 3 ranks/filters the "
+        "aggregated results, etc. The final query reads from the last CTE. "
+        "Use ctes when the question involves: finding a top entity then querying it, "
+        "set operations (excluding, difference), or multi-level aggregation."
+    ),
 }
 
 
@@ -264,6 +310,9 @@ def build_plan_prompt_with_strategy(
     strategy: str = "default",
     memory_context: str | None = None,
     join_hints: list[str] | None = None,
+    semantic_context: str | None = None,
+    decomposition_context: str | None = None,
+    sample_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Return plan-generation messages with an optional strategy hint."""
     hint = _STRATEGY_HINTS.get(strategy, "")
@@ -276,6 +325,12 @@ def build_plan_prompt_with_strategy(
     user_content = _PLAN_USER.format(
         schema_text=schema_text, instruction=instruction
     )
+    if sample_context:
+        user_content = sample_context + "\n\n" + user_content
+    if semantic_context:
+        user_content = semantic_context + "\n\n" + user_content
+    if decomposition_context:
+        user_content = decomposition_context + "\n\n" + user_content
     if memory_context:
         user_content = memory_context + "\n\n" + user_content
     return [

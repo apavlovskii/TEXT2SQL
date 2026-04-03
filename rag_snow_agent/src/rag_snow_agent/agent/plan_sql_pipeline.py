@@ -17,7 +17,13 @@ from ..prompting.prompt_builder import (
     build_plan_prompt,
     build_sql_prompt,
 )
+from ..prompting.question_decomposition import (
+    QuestionDecomposition,
+    decompose_question,
+    render_decomposition_for_prompt,
+)
 from ..prompting.sql_compiler import compile_plan
+from ..prompting.subgoal_validator import validate_sql_against_decomposition
 from ..retrieval.hybrid_retriever import HybridRetriever
 from ..retrieval.plan_expansion import expand_schema_for_plan
 from ..retrieval.schema_slice import SchemaSlice
@@ -81,6 +87,10 @@ def run_pipeline(
     use_llm_sql: bool = False,
     memory_context: str | None = None,
     retriever: HybridRetriever | None = None,
+    semantic_context: str | None = None,
+    decompose: bool = False,
+    decomposition_model: str | None = None,
+    sample_context: str | None = None,
 ) -> PipelineResult:
     """Execute the full plan → SQL pipeline.
 
@@ -93,8 +103,24 @@ def run_pipeline(
     """
     result = PipelineResult(sql="")
 
+    # ── Step 0 (optional): Decompose question ──────────────────────────
+    decomp: QuestionDecomposition | None = None
+    decomposition_context: str | None = None
+    if decompose:
+        decomp_model = decomposition_model or model
+        decomp = decompose_question(instruction, model=decomp_model)
+        result.llm_calls += 1
+        decomposition_context = render_decomposition_for_prompt(
+            decomp, semantic_context=semantic_context,
+        ) or None
+
     # ── Step 1: Generate plan ───────────────────────────────────────────
-    plan_messages = build_plan_prompt(instruction, schema_slice, memory_context=memory_context)
+    plan_messages = build_plan_prompt(
+        instruction, schema_slice, memory_context=memory_context,
+        semantic_context=semantic_context,
+        decomposition_context=decomposition_context,
+        sample_context=sample_context,
+    )
     plan_raw = call_llm(plan_messages, model=model, temperature=temperature, max_tokens=max_tokens)
     result.plan_json_raw = plan_raw
     result.llm_calls += 1
@@ -143,6 +169,11 @@ def run_pipeline(
     # ── Step 4: Validate identifiers ────────────────────────────────────
     validation = validate_sql(result.sql, schema_slice)
     result.validation = validation
+
+    # ── Step 4b: Validate against decomposition subgoals ──────────────
+    if decomp is not None:
+        _, decomp_warnings = validate_sql_against_decomposition(result.sql, decomp)
+        result.warnings.extend(decomp_warnings)
 
     if validation.valid:
         return result

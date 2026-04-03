@@ -158,6 +158,25 @@ def _build_result_mismatch_repair_prompt(
     return _build_repair_prompt(instruction, previous_sql, error_message, schema_text, extra)
 
 
+def _build_empty_result_repair_prompt(
+    instruction: str,
+    previous_sql: str,
+    error_message: str,
+    schema_text: str,
+) -> list[dict[str, str]]:
+    extra = (
+        "The SQL executed successfully but returned ZERO ROWS (empty result). "
+        "Since output is empty, please simplify some conditions. Consider: "
+        "1) Relaxing date range filters — check if dates are stored as NUMBER (YYYYMMDD) or VARCHAR, not DATE type. "
+        "2) Removing restrictive WHERE clauses that may filter out all rows. "
+        "3) Checking if column values match expected format (e.g., country_code='US' vs 'United States'). "
+        "4) Using ILIKE instead of = for string matching. "
+        "5) Verifying VARIANT field access paths — ensure colon syntax is correct. "
+        "Return a corrected SQL that produces non-empty results."
+    )
+    return _build_repair_prompt(instruction, previous_sql, error_message, schema_text, extra)
+
+
 def _strip_sql_fences(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -256,6 +275,7 @@ def refine_sql(
     eval_standards: dict | None = None,
     instance_id: str | None = None,
     max_same_error_type: int = 3,
+    sample_context: str | None = None,
 ) -> tuple[str, list[RepairTraceItem], ExecutionResult | None]:
     """Run EXPLAIN → execute → repair loop.
 
@@ -267,6 +287,8 @@ def refine_sql(
     last_result: ExecutionResult | None = None
 
     schema_text = schema_slice.format_for_prompt()
+    if sample_context:
+        schema_text = schema_text + "\n\n" + sample_context
 
     # ── Pre-execution column validation ──────────────────────────────
     if chroma_store is not None:
@@ -511,7 +533,11 @@ def _attempt_repair(
     chroma_store: ChromaStore | None = None,
 ) -> str:
     """Dispatch to error-specific repair strategy and return fixed SQL."""
-    if error_type in (RESULT_MISMATCH, EMPTY_RESULT):
+    if error_type == EMPTY_RESULT:
+        messages = _build_empty_result_repair_prompt(
+            instruction, current_sql, error_msg, schema_text
+        )
+    elif error_type == RESULT_MISMATCH:
         messages = _build_result_mismatch_repair_prompt(
             instruction, current_sql, error_msg, schema_text
         )

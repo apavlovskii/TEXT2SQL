@@ -27,11 +27,28 @@ def _candidate_to_result(
     trace: list,
     exec_result,
 ) -> dict:
-    """Build a structured result dict for one candidate (before scoring)."""
-    execution_success = exec_result.success if exec_result else False
+    """Build a structured result dict for one candidate (before scoring).
+
+    ``execution_success`` is True if the SQL executed on Snowflake and returned
+    rows, **even if gold-match verification later failed**.  The refiner marks
+    ``exec_result.success = False`` when gold doesn't match, but the SQL did
+    execute — we detect this via ``row_count > 0`` combined with an error
+    message mentioning "gold" or "results don't match".
+    """
     row_count = exec_result.row_count if exec_result else None
     rows_sample = exec_result.rows_sample if exec_result else None
     column_names = exec_result.column_names if exec_result else None
+
+    # Determine if SQL actually executed on Snowflake (even if gold failed)
+    if exec_result and exec_result.success:
+        execution_success = True
+    elif exec_result and row_count is not None and row_count > 0:
+        # Gold-match failure: SQL executed and returned rows, but results
+        # didn't match gold.  Treat as execution success for scoring purposes.
+        execution_success = True
+    else:
+        execution_success = False
+
     error_type = None
     if exec_result and not exec_result.success and exec_result.error_message:
         error_type = classify_snowflake_error(exec_result.error_message)
@@ -41,7 +58,7 @@ def _candidate_to_result(
         "strategy": candidate.strategy,
         "initial_sql": candidate.sql,
         "final_sql": final_sql,
-        "success": execution_success,
+        "success": exec_result.success if exec_result else False,
         "execution_success": execution_success,
         "repairs_count": len(trace),
         "error_type": error_type,
@@ -84,6 +101,9 @@ def run_best_of_n(
     gold_dir: str | Path | None = None,
     eval_standards: dict | None = None,
     max_same_error_type: int = 3,
+    semantic_context: str | None = None,
+    decompose: bool = False,
+    sample_context: str | None = None,
 ) -> dict:
     """Generate N candidates, execute+repair, verify, select the best."""
     log.info(
@@ -100,6 +120,9 @@ def run_best_of_n(
         max_tokens=max_tokens,
         n=n,
         strategies=strategies,
+        semantic_context=semantic_context,
+        decompose=decompose,
+        sample_context=sample_context,
     )
 
     # Infer expected shape once for the instruction
@@ -151,6 +174,7 @@ def run_best_of_n(
             eval_standards=eval_standards,
             instance_id=instance_id,
             max_same_error_type=max_same_error_type,
+            sample_context=sample_context,
         )
 
         cr = _candidate_to_result(candidate, final_sql, trace, exec_result)

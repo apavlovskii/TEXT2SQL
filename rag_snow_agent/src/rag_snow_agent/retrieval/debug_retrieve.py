@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -31,6 +32,81 @@ def _load_config() -> dict:
     if _CONFIG_PATH.exists():
         return yaml.safe_load(_CONFIG_PATH.read_text()) or {}
     return {}
+
+
+_VARIANT_FIELD_PARENT_RE = re.compile(r'^"?([^"]+)"?:(.+)$')
+
+
+def _enrich_variant_fields(
+    schema_slice: SchemaSlice,
+    collection,
+    db_id: str,
+) -> None:
+    """Populate ``variant_fields`` and correct ``variant_kind`` on VARIANT columns.
+
+    Queries ChromaDB for VARIANT_FIELD entries belonging to each table in the
+    slice, groups them by parent VARIANT column, and attaches the sub-field
+    names.  Columns with known scalar sub-fields are reclassified as OBJECT
+    (direct colon access) rather than ARRAY (needs FLATTEN).
+    """
+    for ts in schema_slice.tables:
+        # Fetch all VARIANT_FIELD entries for this table
+        try:
+            vf_results = collection.get(
+                where={
+                    "$and": [
+                        {"db_id": db_id},
+                        {"object_type": "column"},
+                        {"data_type": "VARIANT_FIELD"},
+                        {"table_qualified_name": ts.qualified_name},
+                    ]
+                },
+                include=["metadatas"],
+            )
+        except Exception:
+            log.debug("Failed to fetch VARIANT_FIELDs for %s", ts.qualified_name)
+            continue
+
+        if not vf_results.get("metadatas"):
+            continue
+
+        # Group sub-field names by parent column:  "totals":pageviews → totals → [pageviews]
+        # Also track whether the sub-fields come from array elements or direct objects
+        fields_by_parent: dict[str, list[str]] = defaultdict(list)
+        is_array_element: dict[str, bool] = {}
+        for meta in vf_results["metadatas"]:
+            col_name = meta.get("qualified_name", "").rsplit(".", 1)[-1]
+            comment = meta.get("comment", "") or ""
+            m = _VARIANT_FIELD_PARENT_RE.match(col_name)
+            if m:
+                parent = m.group(1)   # e.g. "totals"
+                field = m.group(2)    # e.g. "pageviews"
+                fields_by_parent[parent].append(field)
+                if "array element" in comment.lower():
+                    is_array_element[parent] = True
+
+        if not fields_by_parent:
+            continue
+
+        # Attach to matching ColumnSlice objects
+        for cs in ts.columns:
+            canon = (cs.original_name or cs.name).strip('"')
+            if canon in fields_by_parent:
+                cs.variant_fields = sorted(fields_by_parent[canon])
+                if is_array_element.get(canon):
+                    # Sub-fields from array elements → ARRAY that needs FLATTEN
+                    cs.variant_kind = "ARRAY"
+                    log.debug(
+                        "Enriched %s.%s with %d VARIANT sub-fields (kind=ARRAY, array elements)",
+                        ts.qualified_name, canon, len(cs.variant_fields),
+                    )
+                else:
+                    # Sub-fields from direct object access → OBJECT
+                    cs.variant_kind = "OBJECT"
+                    log.debug(
+                        "Enriched %s.%s with %d VARIANT sub-fields (kind=OBJECT)",
+                        ts.qualified_name, canon, len(cs.variant_fields),
+                    )
 
 
 def build_schema_slice(
@@ -62,14 +138,18 @@ def build_schema_slice(
         for ci in cols_by_table.get(qname, []):
             col_name = ci.qualified_name.rsplit(".", 1)[-1]
             raw_dtype = ci.metadata.get("data_type", "VARCHAR")
+            # Skip VARIANT_FIELD sub-columns — their info is carried by
+            # the parent VARIANT column's variant_fields list instead.
+            if raw_dtype.upper() == "VARIANT_FIELD":
+                continue
             cs = ColumnSlice(
                 name=col_name,
                 data_type=raw_dtype,
-                comment=None,
+                comment=ci.metadata.get("comment") or None,
                 original_name=col_name,  # preserves exact case from qualified_name
                 token_estimate=ci.metadata.get("token_estimate", 5),
                 fused_rank=ci.fused_rank,
-                is_variant=raw_dtype.upper() in ("VARIANT", "VARIANT_FIELD", "OBJECT", "ARRAY"),
+                is_variant=raw_dtype.upper() in ("VARIANT", "OBJECT", "ARRAY"),
             )
             classify_column(cs)
             col_slices.append(cs)
@@ -89,19 +169,23 @@ def build_schema_slice(
             for meta in all_cols["metadatas"] or []:
                 col_name = meta.get("qualified_name", "").rsplit(".", 1)[-1]
                 raw_dtype = meta.get("data_type", "VARCHAR")
+                if raw_dtype.upper() == "VARIANT_FIELD":
+                    continue
                 cs = ColumnSlice(
                     name=col_name,
                     data_type=raw_dtype,
+                    comment=meta.get("comment") or None,
                     original_name=col_name,
                     token_estimate=meta.get("token_estimate", 5),
                     fused_rank=999,
-                    is_variant=raw_dtype.upper() in ("VARIANT", "VARIANT_FIELD", "OBJECT", "ARRAY"),
+                    is_variant=raw_dtype.upper() in ("VARIANT", "OBJECT", "ARRAY"),
                 )
                 classify_column(cs)
                 col_slices.append(cs)
 
         ts = TableSlice(
             qualified_name=qname,
+            comment=ti.metadata.get("comment") or None,
             table_token_estimate=ti.metadata.get("token_estimate", 10),
             fused_rank=ti.fused_rank,
             columns=col_slices,
@@ -109,6 +193,9 @@ def build_schema_slice(
         table_slices.append(ts)
 
     schema_slice = SchemaSlice(db_id=db_id, tables=table_slices)
+
+    # Enrich VARIANT columns with known sub-field paths from ChromaDB
+    _enrich_variant_fields(schema_slice, retriever.collection, db_id)
 
     # Connectivity expansion
     if connectivity_rounds > 0:

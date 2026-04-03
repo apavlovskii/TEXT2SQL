@@ -11,6 +11,15 @@ log = logging.getLogger(__name__)
 
 _JOIN_RE = re.compile(r"(^ID$|_ID$|_KEY$)", re.IGNORECASE)
 _TIME_RE = re.compile(r"(DATE|TIME|TIMESTAMP)", re.IGNORECASE)
+_DATE_NAME_RE = re.compile(
+    r"(date|time|created_at|updated_at|_dt$|_ts$|timestamp)", re.IGNORECASE
+)
+_NUMERIC_TYPES = {
+    "NUMBER", "INT", "INTEGER", "BIGINT", "SMALLINT", "FLOAT",
+    "DECIMAL", "NUMERIC", "DOUBLE", "REAL",
+}
+_STRING_TYPES = {"VARCHAR", "STRING", "TEXT", "CHAR", "CHARACTER"}
+_VARIANT_TYPES = {"VARIANT", "OBJECT", "ARRAY"}
 
 
 def _is_protected(col: ColumnSlice) -> bool:
@@ -19,11 +28,29 @@ def _is_protected(col: ColumnSlice) -> bool:
 
 
 def classify_column(col: ColumnSlice) -> ColumnSlice:
-    """Set is_join_key / is_time_column flags based on name and type."""
+    """Set is_join_key / is_time_column / variant_kind / date_format flags."""
     if _JOIN_RE.search(col.name):
         col.is_join_key = True
     if _TIME_RE.search(col.data_type) or _TIME_RE.search(col.name):
         col.is_time_column = True
+
+    # ── VARIANT kind classification ─────────────────────────────────────
+    dtype_upper = col.data_type.upper().split("(")[0].strip()
+    if col.is_variant and col.variant_kind is None:
+        if dtype_upper == "ARRAY":
+            col.variant_kind = "ARRAY"
+        elif dtype_upper == "OBJECT":
+            col.variant_kind = "OBJECT"
+        elif dtype_upper in ("VARIANT", "VARIANT_FIELD"):
+            # Default VARIANT to ARRAY — the common case requiring FLATTEN
+            col.variant_kind = "ARRAY"
+
+    # ── Date format inference ───────────────────────────────────────────
+    if col.is_time_column and col.date_format is None:
+        if dtype_upper in _NUMERIC_TYPES and _DATE_NAME_RE.search(col.name):
+            col.date_format = "YYYYMMDD integer"
+        elif dtype_upper in _STRING_TYPES and _DATE_NAME_RE.search(col.name):
+            col.date_format = "YYYYMMDD string"
     return col
 
 
