@@ -28,6 +28,7 @@ Detailed setup, credential, execution, output, and evaluation instructions are d
 - `README_DSRLITE.md` — detailed instructions for setting up and running `DSR-SQL / DSR_Lite`
 - `README_REFORCE.md` — detailed instructions for setting up and running `ReFoRCE`
 - `README_SPIDER2.md` — detailed instructions for setting up and running `Spider2 / spider-agent-snow`
+- [`rag_snow_agent/README.md`](rag_snow_agent/README.md) — **Analytics Insite**: our custom RAG-based Text-to-SQL agent with web UI, including full installation instructions (local dev, Docker Compose, Docker standalone), API reference, and benchmark execution guide
 
 Use those files when you want the exact commands, environment setup steps, output locations, and run-specific notes for each benchmark.
 
