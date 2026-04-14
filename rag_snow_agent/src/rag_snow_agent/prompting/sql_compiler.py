@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..retrieval.schema_slice import SchemaSlice
-from .plan_schema import PlanCTE, PlanFlatten, QueryPlan
+from .plan_schema import PlanCTE, PlanFlatten, PlanGeoJoin, QueryPlan
 
 
 def _alias(idx: int) -> str:
@@ -85,11 +85,48 @@ def _resolve_column_or_flatten(
     return _resolve_column(table, column, alias_map, case_map)
 
 
+def _compile_geo_joins(
+    geo_joins: list[PlanGeoJoin],
+    alias_map: dict[str, str],
+) -> list[str]:
+    """Generate spatial JOIN clauses with geospatial ON predicates."""
+    parts: list[str] = []
+    for gj in geo_joins:
+        jtype = gj.join_type.upper()
+        right_alias = alias_map.get(gj.right_table, gj.right_table)
+        # Substitute table aliases into the ON expression
+        on_expr = _substitute_aliases(gj.on_expression, alias_map)
+        if jtype == "CROSS":
+            parts.append(f"CROSS JOIN {gj.right_table} AS {right_alias}")
+        else:
+            parts.append(
+                f"{jtype} JOIN {gj.right_table} AS {right_alias} "
+                f"ON {on_expr}"
+            )
+    return parts
+
+
+def _substitute_aliases(expression: str, alias_map: dict[str, str]) -> str:
+    """Best-effort substitution of full table names with aliases in a raw expression.
+
+    Replaces occurrences of qualified table names (e.g. ``DB.SCHEMA.TABLE``)
+    with the corresponding compiler alias (e.g. ``t1``).  This allows the LLM
+    to write geo expressions using full table names and have them shortened.
+    """
+    result = expression
+    # Sort by length descending so longer names are replaced first
+    for full_name, alias in sorted(alias_map.items(), key=lambda x: -len(x[0])):
+        result = result.replace(full_name, alias)
+    return result
+
+
 def _compile_single_block(
     selected_tables: list[str],
     joins: list,
+    geo_joins: list[PlanGeoJoin],
     flatten_ops: list[PlanFlatten],
     filters: list,
+    geo_filters: list,
     group_by: list[str],
     aggregations: list,
     order_by: list,
@@ -115,6 +152,9 @@ def _compile_single_block(
             f"{jtype} JOIN {j.right_table} AS {right_alias} "
             f"ON {left_ref} = {right_ref}"
         )
+
+    # Geospatial JOIN clauses
+    from_parts.extend(_compile_geo_joins(geo_joins, alias_map))
 
     # LATERAL FLATTEN clauses
     from_parts.extend(_compile_flatten_from(flatten_ops, alias_map))
@@ -179,6 +219,10 @@ def _compile_single_block(
             where_parts.append(f"{col_ref} {op} {val}")
         else:
             where_parts.append(f"{col_ref} {op} NULL")
+
+    # Geospatial WHERE predicates (emitted verbatim with alias substitution)
+    for gf in geo_filters:
+        where_parts.append(_substitute_aliases(gf.expression, alias_map))
 
     where_clause = " AND ".join(where_parts) if where_parts else ""
 
@@ -252,11 +296,19 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
                     # Upstream CTE name — reference directly
                     cte_alias_map[tbl] = tbl
 
+            # Also add geo_join right tables to the alias map
+            for gj in cte.geo_joins:
+                if gj.right_table not in cte_alias_map:
+                    idx = len(cte_alias_map)
+                    cte_alias_map[gj.right_table] = _alias(idx)
+
             block = _compile_single_block(
                 selected_tables=cte.selected_tables,
                 joins=cte.joins,
+                geo_joins=cte.geo_joins,
                 flatten_ops=cte.flatten_ops,
                 filters=cte.filters,
+                geo_filters=cte.geo_filters,
                 group_by=cte.group_by,
                 aggregations=cte.aggregations,
                 order_by=cte.order_by,
@@ -271,13 +323,15 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
 
         # If there are top-level aggregations/group_by/filters, build a final
         # SELECT from the last CTE. Otherwise just SELECT * FROM last_cte.
-        if plan.aggregations or plan.group_by or plan.filters:
+        if plan.aggregations or plan.group_by or plan.filters or plan.geo_filters:
             final_alias_map = {last_cte: last_cte}
             final_block = _compile_single_block(
                 selected_tables=[last_cte],
                 joins=[],
+                geo_joins=[],
                 flatten_ops=[],
                 filters=plan.filters,
+                geo_filters=plan.geo_filters,
                 group_by=plan.group_by,
                 aggregations=plan.aggregations,
                 order_by=plan.order_by,
@@ -296,12 +350,19 @@ def compile_plan(plan: QueryPlan, schema_slice: SchemaSlice | None = None) -> st
 
         return "WITH " + ",\n".join(cte_parts) + "\n" + final_block
 
+    # Add geo_join right tables to alias_map
+    for gj in plan.geo_joins:
+        if gj.right_table not in alias_map:
+            alias_map[gj.right_table] = _alias(len(alias_map))
+
     # ── Single-block compilation (no CTEs) ──────────────────────────────
     return _compile_single_block(
         selected_tables=plan.selected_tables,
         joins=plan.joins,
+        geo_joins=plan.geo_joins,
         flatten_ops=plan.flatten_ops,
         filters=plan.filters,
+        geo_filters=plan.geo_filters,
         group_by=plan.group_by,
         aggregations=plan.aggregations,
         order_by=plan.order_by,

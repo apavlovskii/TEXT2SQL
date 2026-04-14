@@ -13,13 +13,15 @@ from uuid import uuid4
 
 log = logging.getLogger(__name__)
 
-# Simple heuristic to detect non-data questions
-_DATA_KEYWORDS = re.compile(
-    r"\b(select|query|table|column|database|sql|count|sum|average|avg|max|min|"
-    r"group by|order by|filter|where|join|revenue|sales|visitors|sessions|"
-    r"patents|products|transactions|pageviews|hits|traffic|users|customers|"
-    r"how many|what is the|which|top|total|monthly|yearly|daily|between|"
-    r"from \d{4}|in \d{4}|percent|rate|ratio|growth)\b",
+# Heuristic to detect NON-data questions (inverted: default is data query).
+# Only bypass the agent for clearly conversational/general questions.
+_GENERAL_PATTERNS = re.compile(
+    r"^(hi|hello|hey|thanks|thank you|bye|goodbye|good morning|good evening)\b|"
+    r"^(what is your name|who are you|who made you|how are you|tell me a joke|"
+    r"what can you do|help me understand|explain the concept|what does .+ mean|"
+    r"define |summarize this|translate |write a poem|write a story|"
+    r"what is the capital of|what is the population of|"
+    r"how do I install|how to configure|what programming language)\b",
     re.IGNORECASE,
 )
 
@@ -71,8 +73,8 @@ class AgentAdapter:
         return self._call_llm
 
     def is_data_question(self, question: str) -> bool:
-        """Heuristic: does this question require querying a database?"""
-        return bool(_DATA_KEYWORDS.search(question))
+        """Heuristic: default True (route to agent). Only False for clearly general questions."""
+        return not bool(_GENERAL_PATTERNS.search(question.strip()))
 
     async def answer_general_question(
         self,

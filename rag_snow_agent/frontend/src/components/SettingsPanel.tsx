@@ -46,17 +46,6 @@ export function SettingsPanel({ settings, onChange }: Props) {
           />
         </div>
       </div>
-      <div>
-        <label className="text-xs text-gray-400 block mb-1">Datasource</label>
-        <select
-          value={settings.datasource}
-          onChange={(e) => onChange({ ...settings, datasource: e.target.value })}
-          className="w-full bg-gray-800 text-sm rounded px-2 py-1.5 border border-gray-600 focus:border-blue-500 focus:outline-none text-white"
-        >
-          <option value="sqlite">SQLite (local)</option>
-          <option value="snowflake">Snowflake</option>
-        </select>
-      </div>
     </div>
   );
 }

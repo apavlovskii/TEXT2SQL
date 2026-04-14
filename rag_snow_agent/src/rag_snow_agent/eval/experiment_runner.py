@@ -31,6 +31,29 @@ log = logging.getLogger(__name__)
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "defaults.yaml"
 DEFAULT_REPORTS_DIR = Path("reports/experiments")
 
+# Known locations for external knowledge docs (shared with index_external_knowledge.py)
+_EXTERNAL_DOC_DIRS = [
+    # TEXT2SQL/ReFoRCE and TEXT2SQL/Spider2 (in-repo copies)
+    Path(__file__).resolve().parents[3] / ".." / "ReFoRCE" / "spider2-snow" / "resource" / "documents",
+    Path(__file__).resolve().parents[3] / ".." / "Spider2" / "spider2-snow" / "resource" / "documents",
+    # Workspace-level ~/ReFoRCE and ~/Spider2 (upstream forks)
+    Path(__file__).resolve().parents[5] / "ReFoRCE" / "spider2-snow" / "resource" / "documents",
+    Path(__file__).resolve().parents[5] / "Spider2" / "spider2-snow" / "resource" / "documents",
+]
+
+
+def _load_external_knowledge(filename: str) -> str | None:
+    """Load an external knowledge markdown file by name.
+
+    Searches known locations for the file and returns its content.
+    Returns None if not found.
+    """
+    for doc_dir in _EXTERNAL_DOC_DIRS:
+        path = doc_dir / filename
+        if path.exists():
+            return path.read_text()
+    return None
+
 
 def _git_commit_hash() -> str | None:
     """Best-effort retrieval of current git commit hash."""
@@ -349,6 +372,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
             instance_id = instance.get("instance_id", f"unknown_{i}")
             instruction = instance.get("instruction", "")
             db_id = instance.get("db_id", "")
+            external_knowledge = instance.get("external_knowledge")
 
             log.info("[%d/%d] Processing %s", i, len(instances), instance_id)
             t_start = time.monotonic()
@@ -436,6 +460,19 @@ def run_experiment(args: argparse.Namespace) -> Path:
                             log.info("No sample records found for %s tables", instance_id)
                     except Exception as exc:
                         log.warning("Sample records retrieval failed for %s: %s", instance_id, exc)
+
+                # Inject per-instance external knowledge document if referenced
+                if external_knowledge and external_knowledge not in ("None", "none", "null"):
+                    ek_content = _load_external_knowledge(external_knowledge)
+                    if ek_content:
+                        ek_section = f"External knowledge ({external_knowledge}):\n{ek_content}"
+                        if semantic_context:
+                            semantic_context = ek_section + "\n\n" + semantic_context
+                        else:
+                            semantic_context = ek_section
+                        log.info("Injected external knowledge: %s (%d chars)", external_knowledge, len(ek_content))
+                    else:
+                        log.warning("External knowledge file not found: %s", external_knowledge)
 
                 log.info("Features: decompose=%s, semantic_context=%s chars, sample_context=%s chars, chroma_store=%s",
                          decompose, len(semantic_context) if semantic_context else 0,

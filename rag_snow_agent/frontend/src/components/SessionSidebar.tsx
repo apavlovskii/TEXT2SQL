@@ -13,6 +13,7 @@ interface Props {
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
   onDbChange: (db: string) => void;
+  onDatasourceChange: (datasource: string) => void;
   onSettingsChange: (settings: AgentSettings) => void;
 }
 
@@ -26,6 +27,7 @@ export function SessionSidebar({
   onNewSession,
   onDeleteSession,
   onDbChange,
+  onDatasourceChange,
   onSettingsChange,
 }: Props) {
   return (
@@ -36,7 +38,20 @@ export function SessionSidebar({
         <p className="text-xs text-gray-400 mt-1">Text-to-SQL Chatbot</p>
       </div>
 
-      {/* DB Selector */}
+      {/* Datasource Selector (first) */}
+      <div className="px-4 py-3 border-b border-gray-700">
+        <label className="text-xs text-gray-400 block mb-1">Datasource</label>
+        <select
+          value={settings.datasource}
+          onChange={(e) => onDatasourceChange(e.target.value)}
+          className="w-full bg-gray-800 text-sm rounded px-2 py-1.5 border border-gray-600 focus:border-blue-500 focus:outline-none text-white"
+        >
+          <option value="sqlite">SQLite (local)</option>
+          <option value="snowflake">Snowflake</option>
+        </select>
+      </div>
+
+      {/* DB Selector (second, populated from datasource) */}
       <div className="px-4 py-3 border-b border-gray-700">
         <label className="text-xs text-gray-400 block mb-1">Database</label>
         <select
@@ -50,7 +65,7 @@ export function SessionSidebar({
         </select>
       </div>
 
-      {/* Settings */}
+      {/* Settings (model, retries, candidates) */}
       <SettingsPanel settings={settings} onChange={onSettingsChange} />
 
       {/* Schema Explorer */}

@@ -76,6 +76,30 @@ class PlanFlatten(_CoercingBase):
     extract_fields: list[str] = []  # nested paths to extract, e.g. ["page.pagePath", "eCommerceAction.action_type"]
 
 
+class PlanGeoJoin(_CoercingBase):
+    """A spatial JOIN using a geospatial predicate in the ON clause.
+
+    Unlike PlanJoin (equality only), this allows arbitrary spatial predicates
+    such as ST_WITHIN, ST_CONTAINS, ST_INTERSECTS in the ON expression.
+    """
+
+    right_table: str  # table to join
+    join_type: str = "INNER"  # INNER / LEFT / CROSS
+    on_expression: str  # complete ON clause SQL, e.g. "ST_WITHIN(ST_POINT(t1.\"lon\", t1.\"lat\"), TO_GEOGRAPHY(t2.\"geom\"))"
+
+
+class PlanGeoFilter(_CoercingBase):
+    """A geospatial predicate for the WHERE clause.
+
+    The expression is a complete SQL boolean predicate emitted verbatim.
+    Examples:
+      - "ST_DWITHIN(ST_MAKEPOINT(t1.\"lon\", t1.\"lat\"), ST_MAKEPOINT(-73.764, 41.197), 32186.8)"
+      - "ST_DISTANCE(TO_GEOGRAPHY(t1.\"geography\"), TO_GEOGRAPHY('POINT(51.5 26.75)')) <= 5000"
+    """
+
+    expression: str  # complete SQL boolean predicate
+
+
 class PlanCTE(_CoercingBase):
     """One step (CTE) in a multi-step query pipeline."""
 
@@ -83,8 +107,10 @@ class PlanCTE(_CoercingBase):
     description: str  # what this CTE computes
     selected_tables: list[str] = []  # tables used in this CTE (or upstream CTE names)
     joins: list[PlanJoin] = []
+    geo_joins: list[PlanGeoJoin] = []  # spatial joins with geospatial predicates
     flatten_ops: list[PlanFlatten] = []
     filters: list[PlanFilter] = []
+    geo_filters: list[PlanGeoFilter] = []  # geospatial WHERE predicates
     group_by: list[str] = []
     aggregations: list[PlanAggregation] = []
     order_by: list[PlanOrderBy] = []
@@ -94,8 +120,10 @@ class PlanCTE(_CoercingBase):
 class QueryPlan(_CoercingBase):
     selected_tables: list[str]  # qualified table names from SchemaSlice
     joins: list[PlanJoin] = []
+    geo_joins: list[PlanGeoJoin] = []  # spatial joins with geospatial predicates
     flatten_ops: list[PlanFlatten] = []  # LATERAL FLATTEN operations on VARIANT ARRAYs
     filters: list[PlanFilter] = []
+    geo_filters: list[PlanGeoFilter] = []  # geospatial WHERE predicates
     group_by: list[str] = []  # "table.column" or just "column"
     aggregations: list[PlanAggregation] = []
     order_by: list[PlanOrderBy] = []

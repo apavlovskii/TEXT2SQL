@@ -32,6 +32,7 @@ STRATEGIES = [
     "join_first",
     "metric_first",
     "time_first",
+    "geo_first",
 ]
 
 

@@ -530,6 +530,94 @@ UNPIVOT(value FOR quarter IN (q1, q2, q3, q4));
 ```
 """)
 
+_register("GEOSPATIAL_FUNCTIONS", """\
+# Snowflake Geospatial Functions
+
+## Point Construction
+```sql
+-- From longitude, latitude columns (lon comes first!)
+ST_POINT(longitude, latitude)
+ST_MAKEPOINT(longitude, latitude)
+
+-- From WKT string (POINT takes lon lat order)
+TO_GEOGRAPHY('POINT(51.5 26.75)')
+```
+
+## Converting Stored Geometry
+```sql
+-- Convert a stored GEOGRAPHY/VARIANT column to GEOGRAPHY type
+TO_GEOGRAPHY(column_name)
+TO_GEOGRAPHY("zip_code_geom")
+```
+
+## Spatial Predicates (return BOOLEAN)
+```sql
+-- Point-in-polygon: is the point inside the polygon?
+ST_WITHIN(point, polygon)
+ST_WITHIN(ST_POINT(t."lon", t."lat"), TO_GEOGRAPHY(z."zip_code_geom"))
+
+-- Polygon-contains-point (reverse of ST_WITHIN)
+ST_CONTAINS(polygon, point)
+ST_CONTAINS(TO_GEOGRAPHY(p."geometry"), TO_GEOGRAPHY(pt."geometry"))
+
+-- Distance-within: are two geographies within N meters?
+ST_DWITHIN(geo1, geo2, distance_in_meters)
+ST_DWITHIN(ST_MAKEPOINT(t."lon", t."lat"), ST_MAKEPOINT(-73.764, 41.197), 32186.8)
+-- 20 miles = 20 * 1609.34 = 32186.8 meters
+
+-- Intersection: do two geographies share any space?
+ST_INTERSECTS(geo1, geo2)
+ST_INTERSECTS(TO_GEOGRAPHY(a."geometry"), TO_GEOGRAPHY(b."geometry"))
+```
+
+## Distance Measurement (returns FLOAT in meters)
+```sql
+-- Geodesic distance in meters between two GEOGRAPHY values
+ST_DISTANCE(geo1, geo2)
+ST_DISTANCE(TO_GEOGRAPHY("geography"), TO_GEOGRAPHY('POINT(51.5 26.75)')) <= 5000
+```
+
+## Common Patterns
+
+### Spatial JOIN (point-in-polygon via zip codes)
+```sql
+SELECT t.*, z."zip_code"
+FROM trips t
+JOIN zip_codes z
+  ON z."state_code" = 'NY'
+ AND ST_WITHIN(
+       ST_POINT(t."longitude", t."latitude"),
+       TO_GEOGRAPHY(z."zip_code_geom")
+     )
+```
+
+### Distance filter in WHERE
+```sql
+SELECT *
+FROM weather_stations w
+WHERE ST_DWITHIN(
+    ST_MAKEPOINT(w."longitude", w."latitude"),
+    ST_MAKEPOINT(-73.764, 41.197),
+    32186.8  -- 20 miles in meters
+)
+```
+
+### Finding features within a polygon
+```sql
+SELECT p.*
+FROM points p
+JOIN polygons g ON ST_CONTAINS(TO_GEOGRAPHY(g."geometry"), TO_GEOGRAPHY(p."geometry"))
+```
+
+## Key Rules
+- GEOGRAPHY distances are always in meters
+- ST_POINT and ST_MAKEPOINT take (longitude, latitude) — lon first!
+- TO_GEOGRAPHY('POINT(lon lat)') uses WKT format — also lon first
+- Convert miles to meters: multiply by 1609.34
+- Convert km to meters: multiply by 1000
+- ST_WITHIN(a, b) is equivalent to ST_CONTAINS(b, a)
+""")
+
 _register("SNOWFLAKE_IDENTIFIERS", """\
 # Snowflake Identifier Quoting Rules
 

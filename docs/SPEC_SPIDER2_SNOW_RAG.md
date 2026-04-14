@@ -162,45 +162,98 @@ Keep `Spider2/` vendor directory unchanged and output to its expected folder lay
 ## 6. ChromaDB Usage (Local)
 ### Persistent path
 - `rag_snow_agent/.chroma/`
+- Embedding model: `text-embedding-3-large` (OpenAI, 3072 dimensions)
+- Similarity metric: cosine
 
 ### Collections
-- `schema_cards` — tables, columns, join edges
-- `external_docs` — markdown chunks (planned)
-- `trace_memory` — successful solution traces for few-shot retrieval
 
-### Stored docs ("cards")
-**TableCard**
-- qualified name (db.schema.table)
-- short description (if any)
-- top columns (pruned)
-- time columns
-- common join keys
+#### 6.1 `schema_cards` (~622 items)
+The primary knowledge base for schema-aware retrieval. Contains three card types:
 
-**ColumnCard**
-- qualified name (db.schema.table.column)
-- type
-- comment
-- sample top values (optional small)
+**TableCard** — one per table (partitioned tables collapsed into one representative)
+- `chroma_id`: `table:<qualified_name>`
+- `document`: table name + LLM-generated description + column list. The description text is embedded for semantic search, so questions about "revenue" will match tables whose descriptions mention transaction data.
+- `metadata`: `db_id`, `object_type=table`, `qualified_name`, `comment` (natural language description), `token_estimate`
+- Partition tables (GA360 GA_SESSIONS_YYYYMMDD, GA4 EVENTS_YYYYMMDD) are collapsed into a single representative with a comment noting the partition pattern and date range. The representative uses an actual table name that exists in Snowflake.
 
-**JoinCard**
-- id: `join:<LEFT_TABLE>.<LEFT_COL>-><RIGHT_TABLE>.<RIGHT_COL>`
-- document: join description with confidence
-- metadata: left_table, right_table, left_column, right_column, confidence, source (fk / heuristic_name)
+**ColumnCard** — one per column, including VARIANT sub-fields
+- `chroma_id`: `column:<qualified_name>`
+- `document`: column name + data type + LLM-generated description. Descriptions are generated from profiled data (100 sample rows) and include value ranges, null rates, format notes, and VARIANT access patterns.
+- `metadata`: `db_id`, `object_type=column`, `qualified_name`, `table_qualified_name`, `data_type`, `comment` (LLM-generated description), `token_estimate`
+- VARIANT sub-field columns have `data_type=VARIANT_FIELD` and are discovered via `OBJECT_KEYS()` or `LATERAL FLATTEN + OBJECT_KEYS()` during indexing. These carry a comment indicating whether they came from an array element or an object property, which determines ARRAY vs OBJECT classification during retrieval enrichment.
 
-**TraceRecord** (in `trace_memory` collection)
-- instruction summary
-- plan summary (tables, joins, aggregations)
-- tables and key columns used
-- final SQL (truncated)
-- repair summary
+**JoinCard** — one per join relationship
+- `chroma_id`: `join:<left_table>.<left_col>-><right_table>.<right_col>`
+- `document`: join description with confidence score
+- `metadata`: `db_id`, `object_type=join`, `left_table`, `left_column`, `right_table`, `right_column`, `confidence` (1.0 for FK, 0.7 for heuristic), `source`
+
+#### 6.2 `semantic_cards` (~5,762 items)
+Semantic facts inferred from schema metadata via deterministic heuristics. Used during retrieval to enrich the schema prompt with contextual hints.
+
+Fact types:
+- `primary_time_column` — columns with DATE/TIMESTAMP types
+- `date_format_pattern` — numeric or string columns with date-like names, classified as "YYYYMMDD integer" or "YYYYMMDD string"
+- `metric_candidate` — numeric columns with metric-like names (revenue, count, price, etc.)
+- `dimension_candidate` — string columns with dimension-like names (source, country, category, etc.)
+- `nested_container_column` — VARIANT/OBJECT/ARRAY columns with their variant_kind classification
+- `identifier_column` — columns matching `*_ID`, `*_KEY`, or `ID` patterns
+
+Each card stores: `db_id`, `fact_type`, `subject` (qualified column name), `confidence` (0.0–1.0), `source_types`
+
+#### 6.3 `sample_records` (10 items)
+Sample data rows for context injection into the plan prompt. Each item represents one table with 2–5 sample rows formatted as compact JSON.
+
+- `metadata`: `db_id`, `table_fqn`, `object_type=sample`, `row_count`
+- `document`: formatted sample rows showing actual data values, helping the LLM understand column formats and VARIANT structure
+
+#### 6.4 `trace_memory` (5 items)
+Successful solution traces for few-shot in-context learning. When the agent successfully solves an instance, the instruction + plan + SQL are persisted here for retrieval on similar future questions.
+
+- `document`: instruction summary + plan summary
+- `metadata`: `db_id`, `instance_id`, `tables_used`
+- Retrieved via semantic similarity to the current question, filtered by `db_id`
+
+#### 6.5 `snowflake_syntax` (55 items)
+Snowflake SQL reference documentation chunks, used during the repair loop to provide syntax guidance when fixing compilation errors.
+
+- `metadata`: `object_type=syntax`, `topic` (e.g., "JOIN", "FLATTEN", "WINDOW"), `section`, `token_estimate`
+- `document`: Snowflake SQL syntax examples and rules
+- Queried when a candidate fails EXPLAIN/execution — the error message + SQL are used to retrieve relevant syntax guidance
 
 ### Metadata (mandatory)
 Each Chroma item must store:
 - `db_id`
-- `object_type` ∈ {table, column, join, doc}
-- `qualified_name`
+- `object_type` ∈ {table, column, join, semantic, sample, syntax}
+- `qualified_name` (for schema_cards)
 - `source` (information_schema / docs / heuristic / fk)
 - `token_estimate`
+
+## 6a. Data Profiling Pipeline
+
+Descriptions in `schema_cards` are generated from actual data via the profiling pipeline:
+
+### Process
+1. **Extract** — Connect to Snowflake and fetch 100 sample rows per table. For partitioned tables (GA360, GA4), only one representative partition is sampled.
+2. **Profile** — For each column, compute: data type, null rate, unique value count, sample values, min/max for numerics, structure summary for VARIANT columns (array vs object, top-level keys).
+3. **Describe** — Send column profiles + sample rows to GPT-5.4 to generate natural language descriptions for each table and column. Descriptions focus on what helps an LLM generate correct SQL: column semantics, value formats, VARIANT access patterns, FLATTEN requirements.
+4. **Store** — Save descriptions to `data/table_column_descriptions.json`.
+5. **Enrich** — Upsert descriptions as `comment` fields on existing TableCard and ColumnCard entries in ChromaDB. This updates both the metadata (for retrieval filtering) and the embedded document text (for semantic search quality).
+
+### Command
+```bash
+uv run python scripts/profile_data.py \
+  --credentials ./snowflake_credentials.json \
+  --db_ids GA360 GA4 PATENTS PATENTS_GOOGLE \
+  --output data/table_column_descriptions.json \
+  --model gpt-5.4 \
+  --enrich --chroma_dir .chroma/
+```
+
+### Impact on retrieval
+The LLM-generated descriptions are embedded into the ChromaDB document text, which means:
+- Semantic search quality improves — questions about "revenue" match columns described as "total transaction revenue multiplied by 10^6"
+- The schema prompt includes column descriptions as comments, giving the LLM explicit guidance on VARIANT field paths, date formats, and value semantics
+- VARIANT columns get ARRAY vs OBJECT classification based on whether their sub-fields were discovered via FLATTEN (array element) or OBJECT_KEYS (direct object)
 
 ## 7. Index Build (Offline / Pre-run)
 Command:

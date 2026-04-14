@@ -27,7 +27,18 @@ Snowflake SQL rules:
   SELECT f.value:"field"::STRING FROM table, LATERAL FLATTEN(input => table."variant_col") f
 - Access VARIANT nested fields with colon: "col":"field"::TYPE
 - Snowflake treats unquoted identifiers as UPPERCASE — always quote mixed-case or lowercase columns.
-- GA360 revenue fields (totalTransactionRevenue, productRevenue, transactionRevenue) are stored multiplied by 10^6. ALWAYS divide by 1000000 to get USD values.\
+- GA360 revenue fields (totalTransactionRevenue, productRevenue, transactionRevenue) are stored multiplied by 10^6. ALWAYS divide by 1000000 to get USD values.
+- For geospatial queries, use Snowflake spatial functions:
+  ST_POINT(longitude, latitude) or ST_MAKEPOINT(longitude, latitude) — create a point from lon/lat columns
+  TO_GEOGRAPHY(col) — convert a GEOGRAPHY/VARIANT column to GEOGRAPHY type
+  TO_GEOGRAPHY('POINT(lon lat)') — create a GEOGRAPHY from WKT literal (note: POINT takes lon lat order)
+  ST_WITHIN(point, polygon) — TRUE if point is inside polygon (point-in-polygon test)
+  ST_CONTAINS(polygon, point) — TRUE if polygon contains point (same as ST_WITHIN with args swapped)
+  ST_DWITHIN(geo1, geo2, distance_meters) — TRUE if distance between two geographies <= threshold
+  ST_DISTANCE(geo1, geo2) — returns geodesic distance in meters between two geographies
+  ST_INTERSECTS(geo1, geo2) — TRUE if two geographies share any space
+- For spatial joins, use geospatial predicates in the ON clause instead of equality.
+- Distance units are ALWAYS meters for GEOGRAPHY type. Convert miles: 1 mile = 1609.34 meters.\
 """
 
 # ── Plan prompt ─────────────────────────────────────────────────────────────
@@ -51,13 +62,15 @@ Plan JSON schema:
 {{
   "selected_tables": ["DB.SCHEMA.TABLE", ...],
   "joins": [{{"left_table": "...", "left_column": "...", "right_table": "...", "right_column": "...", "join_type": "INNER"}}],
+  "geo_joins": [{{"right_table": "DB.SCHEMA.TABLE", "join_type": "INNER", "on_expression": "ST_WITHIN(ST_POINT(t1.\"lon\", t1.\"lat\"), TO_GEOGRAPHY(t2.\"geom\"))"}}],
   "flatten_ops": [{{"table": "DB.SCHEMA.TABLE", "variant_column": "hits", "alias": "h", "extract_fields": ["page.pagePath", "productRevenue"]}}],
   "filters": [{{"table": "...", "column": "...", "op": "=", "value": "..."}}],
+  "geo_filters": [{{"expression": "ST_DWITHIN(ST_MAKEPOINT(t1.\"lon\", t1.\"lat\"), ST_MAKEPOINT(-73.764, 41.197), 32186.8)"}}],
   "group_by": ["table.column", ...],
   "aggregations": [{{"func": "COUNT", "table": "...", "column": "...", "alias": "..."}}],
   "order_by": [{{"expr": "...", "direction": "ASC"}}],
   "limit": null,
-  "ctes": [{{"name": "step_name", "description": "what this step computes", "selected_tables": [...], "joins": [...], "flatten_ops": [...], "filters": [...], "group_by": [...], "aggregations": [...], "order_by": [...], "limit": null}}],
+  "ctes": [{{"name": "step_name", "description": "what this step computes", "selected_tables": [...], "joins": [...], "geo_joins": [...], "flatten_ops": [...], "filters": [...], "geo_filters": [...], "group_by": [...], "aggregations": [...], "order_by": [...], "limit": null}}],
   "notes": null
 }}
 
@@ -68,6 +81,22 @@ flatten_ops usage:
 - "extract_fields": nested paths to extract (e.g. "page.pagePath" becomes value:"page":"pagePath")
 - When referencing flattened data in filters/aggregations, set table to the flatten alias \
 and column to the nested field path (e.g. table="h", column="page.pagePath")
+
+geo_joins usage (for spatial joins):
+- Use geo_joins when you need to JOIN tables using geospatial predicates (ST_WITHIN, ST_CONTAINS, ST_INTERSECTS)
+- "right_table": the table to join (must also be in selected_tables)
+- "on_expression": the complete SQL ON clause with spatial function, e.g. \
+"ST_WITHIN(ST_POINT(t1.\"lon\", t1.\"lat\"), TO_GEOGRAPHY(t2.\"geom\"))"
+- Use table aliases t1, t2, t3... (assigned in order of selected_tables) in the expression
+- You may combine geo_joins with regular filters for non-spatial conditions (e.g. state_code = 'NY')
+
+geo_filters usage (for spatial WHERE predicates):
+- Use geo_filters when you need geospatial predicates in WHERE (ST_DWITHIN, ST_DISTANCE, ST_CONTAINS, etc.)
+- "expression": complete SQL boolean predicate, e.g. \
+"ST_DWITHIN(ST_MAKEPOINT(t1.\"lon\", t1.\"lat\"), ST_MAKEPOINT(-73.764, 41.197), 32186.8)"
+- For ST_DISTANCE comparisons, include the operator: \
+"ST_DISTANCE(TO_GEOGRAPHY(t1.\"geography\"), TO_GEOGRAPHY('POINT(51.5 26.75)')) <= 5000"
+- Use table aliases t1, t2, t3... in the expression
 
 ctes usage:
 - Each CTE is an independent query step, compiled as WITH name AS (SELECT ...)
@@ -300,6 +329,20 @@ _STRATEGY_HINTS: dict[str, str] = {
         "aggregated results, etc. The final query reads from the last CTE. "
         "Use ctes when the question involves: finding a top entity then querying it, "
         "set operations (excluding, difference), or multi-level aggregation."
+    ),
+    "geo_first": (
+        "\nPlanning priority: START by identifying any geospatial relationships in the question. "
+        "Look for keywords like: radius, distance, within, nearby, area, polygon, coordinates, "
+        "latitude, longitude, zip code, neighborhood, boundary, location. "
+        "When spatial relationships are needed:\n"
+        "1. Identify which columns hold GEOGRAPHY/GEOMETRY data or lat/lon coordinates.\n"
+        "2. Use geo_joins for spatial JOIN predicates: "
+        'e.g. {{"right_table": "...", "on_expression": "ST_WITHIN(ST_POINT(t1.\\"lon\\", t1.\\"lat\\"), TO_GEOGRAPHY(t2.\\"geom\\"))"}}\n'
+        "3. Use geo_filters for spatial WHERE predicates: "
+        'e.g. {{"expression": "ST_DWITHIN(ST_MAKEPOINT(t1.\\"lon\\", t1.\\"lat\\"), ST_MAKEPOINT(-73.764, 41.197), 32186.8)"}}\n'
+        "4. Convert miles to meters (1 mile = 1609.34 m) for distance thresholds.\n"
+        "5. Use TO_GEOGRAPHY() to convert stored geometry columns to GEOGRAPHY type.\n"
+        "6. Use ST_POINT(longitude, latitude) — note lon comes FIRST."
     ),
 }
 
