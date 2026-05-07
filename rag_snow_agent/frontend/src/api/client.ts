@@ -15,6 +15,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const getHealth = () => request<HealthInfo>("/api/health");
+export const getDatabases = (datasource: string) =>
+  request<{ datasource: string; databases: string[] }>(`/api/databases?datasource=${datasource}`);
 export const getSessions = () => request<Session[]>("/api/sessions");
 export const createSession = (db_id: string, name?: string) =>
   request<Session>("/api/sessions", { method: "POST", body: JSON.stringify({ db_id, name }) });

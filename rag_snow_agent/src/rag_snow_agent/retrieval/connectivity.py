@@ -15,6 +15,21 @@ log = logging.getLogger(__name__)
 
 _JOIN_RE = re.compile(r"(^ID$|_ID$|_KEY$)", re.IGNORECASE)
 
+# Columns that signal spatial/geographic data — used by join-graph neighbor expansion
+_GEO_COLUMN_RE = re.compile(
+    r"(^lat$|^lon$|^latitude$|^longitude$|^geom$|^geometry$|^geography$|"
+    r"state_name|state_code|zip_code|zip_code_geom)",
+    re.IGNORECASE,
+)
+
+# Question keywords that suggest spatial/geographic columns are needed
+_GEO_QUESTION_RE = re.compile(
+    r"\b(within|radius|distance|nearby|near|miles?|kilometers?|"
+    r"km\b|mi\b|boundary|boundar|polygon|geospatial|spatial|"
+    r"latitude|longitude|lat\b|lon\b|zip\s*code|state\b|county)",
+    re.IGNORECASE,
+)
+
 
 def _join_key_tokens(columns: list[ColumnSlice]) -> set[str]:
     """Return lowercased join-ish column names for a table."""
@@ -222,5 +237,104 @@ def expand_connectivity_with_join_graph(
         schema_slice.tables.append(bridge_ts)
         existing_names.add(bridge_qname)
         log.info("JoinGraph expansion: added bridge table %s", bridge_qname)
+
+    return schema_slice
+
+
+def expand_join_graph_neighbors(
+    schema_slice: SchemaSlice,
+    collection: chromadb.Collection,
+    instruction: str,
+) -> SchemaSlice:
+    """Add 1-hop join-graph neighbors that carry geo/location columns when the
+    question signals a spatial or geographic need.
+
+    This is a targeted expansion: it only fires when the instruction contains
+    spatial keywords (within, radius, distance, etc.) and the neighbor table
+    has columns matching geo patterns (lat, lon, geometry, state_name, etc.).
+    """
+    if not _GEO_QUESTION_RE.search(instruction):
+        return schema_slice
+
+    # Fetch JoinCards for this db_id
+    try:
+        join_results = collection.get(
+            where={"$and": [{"db_id": schema_slice.db_id}, {"object_type": "join"}]},
+            include=["metadatas"],
+        )
+    except Exception:
+        log.debug("Failed to fetch JoinCards for neighbor expansion")
+        return schema_slice
+
+    join_metas = join_results.get("metadatas") or []
+    if not join_metas:
+        return schema_slice
+
+    graph = JoinGraph.from_join_cards(join_metas)
+    existing_names = {t.qualified_name for t in schema_slice.tables}
+    added: list[str] = []
+
+    for ts in list(schema_slice.tables):
+        for edge in graph.neighbors(ts.qualified_name):
+            neighbor = edge.right_table
+            if neighbor in existing_names:
+                continue
+
+            # Check if neighbor has geo/location columns
+            try:
+                neighbor_cols = collection.get(
+                    where={
+                        "$and": [
+                            {"db_id": schema_slice.db_id},
+                            {"object_type": "column"},
+                            {"table_qualified_name": neighbor},
+                        ]
+                    },
+                    include=["metadatas"],
+                )
+            except Exception:
+                continue
+
+            neighbor_col_metas = neighbor_cols.get("metadatas") or []
+            has_geo_col = any(
+                _GEO_COLUMN_RE.search(cm.get("qualified_name", "").rsplit(".", 1)[-1])
+                for cm in neighbor_col_metas
+            )
+            if not has_geo_col:
+                continue
+
+            # Build column slices and add
+            col_slices = []
+            for cm in neighbor_col_metas:
+                col_name = cm.get("qualified_name", "").rsplit(".", 1)[-1]
+                raw_dtype = cm.get("data_type", "VARCHAR")
+                if raw_dtype.upper() == "VARIANT_FIELD":
+                    continue
+                cs = ColumnSlice(
+                    name=col_name,
+                    data_type=raw_dtype,
+                    comment=cm.get("comment") or None,
+                    original_name=col_name,
+                    token_estimate=cm.get("token_estimate", 5),
+                    fused_rank=999,
+                    is_join_key=bool(_JOIN_RE.search(col_name)),
+                )
+                col_slices.append(cs)
+
+            bridge_ts = TableSlice(
+                qualified_name=neighbor,
+                table_token_estimate=5,
+                fused_rank=len(schema_slice.tables) + 1,
+                columns=col_slices,
+            )
+            schema_slice.tables.append(bridge_ts)
+            existing_names.add(neighbor)
+            added.append(neighbor)
+
+    if added:
+        log.info(
+            "Join-graph neighbor expansion: added %d tables with geo columns: %s",
+            len(added), ", ".join(added),
+        )
 
     return schema_slice

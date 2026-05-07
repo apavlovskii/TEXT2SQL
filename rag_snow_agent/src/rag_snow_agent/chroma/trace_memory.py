@@ -31,9 +31,9 @@ class TraceMemoryStore:
     def upsert_trace(self, trace_record: dict) -> None:
         col = self.collection()
         doc = (
-            trace_record.get("instruction_summary", "")
+            (trace_record.get("instruction_summary") or "")
             + "\n"
-            + trace_record.get("plan_summary", "")
+            + (trace_record.get("plan_summary") or "")
         )
         col.upsert(
             ids=[trace_record["trace_id"]],

@@ -19,7 +19,7 @@ import yaml
 
 from ..chroma.chroma_store import ChromaStore
 from .budget import classify_column, trim_to_budget
-from .connectivity import expand_connectivity
+from .connectivity import expand_connectivity, expand_join_graph_neighbors
 from .hybrid_retriever import HybridRetriever, ScoredItem
 from .schema_slice import ColumnSlice, SchemaSlice, TableSlice
 
@@ -202,6 +202,9 @@ def build_schema_slice(
         expand_connectivity(
             schema_slice, retriever.collection, max_rounds=connectivity_rounds
         )
+
+    # Join-graph neighbor expansion: add geo/location tables when question needs them
+    expand_join_graph_neighbors(schema_slice, retriever.collection, query)
 
     # Budget trimming
     trim_to_budget(

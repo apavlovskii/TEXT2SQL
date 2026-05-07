@@ -117,7 +117,7 @@ class AgentAdapter:
         self,
         question: str,
         db_id: str,
-        model: str = "gpt-4o-mini",
+        model: str = "claude-sonnet-4-5",
         max_retries: int = 10,
         max_candidates: int = 2,
         datasource: str = "sqlite",

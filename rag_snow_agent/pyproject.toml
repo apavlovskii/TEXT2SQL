@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic>=0.97.0",
     "chromadb>=1.5.5",
     "fastapi>=0.135.3",
     "google-cloud-bigquery>=3.40.1",

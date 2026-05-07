@@ -191,7 +191,7 @@ async def stream_chat(
     message: str = Query(...),
     session_id: str | None = Query(None),
     db_id: str = Query("GA360"),
-    model: str = Query("gpt-4o-mini"),
+    model: str = Query("claude-sonnet-4-5"),
     max_retries: int = Query(10),
     max_candidates: int = Query(2),
     datasource: str = Query("sqlite"),

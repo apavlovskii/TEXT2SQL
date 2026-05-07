@@ -42,6 +42,22 @@ _EXTERNAL_DOC_DIRS = [
 ]
 
 
+def _is_geo_query(external_knowledge: str | None, instruction: str) -> bool:
+    """Return True if the instance is a geospatial query needing a stronger model.
+
+    Detection: external_knowledge references spatial function docs, or the
+    instruction contains strong spatial signals.
+    """
+    if external_knowledge:
+        ek_lower = external_knowledge.lower()
+        if any(kw in ek_lower for kw in (
+            "functions_st_", "st_within", "st_dwithin",
+            "st_intersects", "st_contains", "st_distance",
+        )):
+            return True
+    return False
+
+
 def _load_external_knowledge(filename: str) -> str | None:
     """Load an external knowledge markdown file by name.
 
@@ -418,6 +434,10 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 max_repairs = agent_cfg.get("max_repairs", 2)
                 memory_enabled = config.get("memory", {}).get("enabled", True)
                 model = llm_cfg.get("model", "gpt-4o-mini")
+                geo_model = llm_cfg.get("geo_model")
+                if geo_model and _is_geo_query(external_knowledge, instruction):
+                    log.info("Geo query detected for %s — using model %s instead of %s", instance_id, geo_model, model)
+                    model = geo_model
                 max_tokens = llm_cfg.get("max_output_tokens", 4096)
                 decompose = agent_cfg.get("decompose_questions", False)
 

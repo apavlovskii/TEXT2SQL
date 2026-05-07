@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..chroma.chroma_store import ChromaStore
+from ..prompting.sql_compiler import rewrite_date_sharded_tables
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import ExecutionResult, SnowflakeExecutor
 from ..snowflake.probes import probe_column_exists
@@ -286,6 +287,12 @@ def refine_sql(
     last_error: str | None = None
     last_result: ExecutionResult | None = None
 
+    def _maybe_rewrite_shards(s: str) -> str:
+        """Apply date-shard rewrite to LLM-generated SQL (idempotent: skip if already rewritten)."""
+        if "_date_shard_union" in s:
+            return s
+        return rewrite_date_sharded_tables(s, schema_slice)
+
     schema_text = schema_slice.format_for_prompt()
     if sample_context:
         schema_text = schema_text + "\n\n" + sample_context
@@ -312,7 +319,7 @@ def refine_sql(
                     repair_prompt, model=model,
                     temperature=temperature, max_tokens=max_tokens,
                 )
-                repaired = _strip_sql_fences(raw)
+                repaired = _maybe_rewrite_shards(_strip_sql_fences(raw))
                 trace.append(RepairTraceItem(
                     attempt=0,
                     input_sql=current_sql,
@@ -361,11 +368,11 @@ def refine_sql(
                     last_result = explain_result
                     break
 
-                repaired = _attempt_repair(
+                repaired = _maybe_rewrite_shards(_attempt_repair(
                     instruction, current_sql, error_msg, error_type,
                     schema_text, schema_slice, model, temperature, max_tokens,
                     chroma_store=chroma_store,
-                )
+                ))
                 trace.append(RepairTraceItem(
                     attempt=attempt + 1,
                     input_sql=current_sql,
@@ -424,11 +431,11 @@ def refine_sql(
                         break
 
                     # Repair: tell LLM results were wrong
-                    repaired = _attempt_repair(
+                    repaired = _maybe_rewrite_shards(_attempt_repair(
                         instruction, current_sql, error_msg, error_type,
                         schema_text, schema_slice, model, temperature, max_tokens,
                         chroma_store=chroma_store,
-                    )
+                    ))
                     trace.append(RepairTraceItem(
                         attempt=attempt + 1,
                         input_sql=current_sql,
@@ -469,11 +476,11 @@ def refine_sql(
         if attempt >= max_repairs:
             break
 
-        repaired = _attempt_repair(
+        repaired = _maybe_rewrite_shards(_attempt_repair(
             instruction, current_sql, error_msg, error_type,
             schema_text, schema_slice, model, temperature, max_tokens,
             chroma_store=chroma_store,
-        )
+        ))
         trace.append(RepairTraceItem(
             attempt=attempt + 1,
             input_sql=current_sql,

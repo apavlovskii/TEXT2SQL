@@ -42,7 +42,7 @@ async def generate_answer(
     columns: list[str],
     rows: list[list[Any]],
     row_count: int,
-    model: str = "gpt-4o-mini",
+    model: str = "claude-sonnet-4-5",
     call_llm_fn=None,
 ) -> str:
     """Generate a natural language answer from SQL results.

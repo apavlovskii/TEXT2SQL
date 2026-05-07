@@ -20,8 +20,9 @@ class AppSettings(BaseSettings):
 
     # Agent / LLM
     OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
     CHROMA_DIR: str = str(_PROJECT_ROOT / ".chroma")
-    LLM_MODEL: str = "gpt-4o-mini"
+    LLM_MODEL: str = "claude-sonnet-4-5"
     LLM_TEMPERATURE: float = 0.2
     DEFAULT_DB_ID: str = "GA360"
     AVAILABLE_DB_IDS: list[str] = ["GA360", "GA4", "PATENTS", "PATENTS_GOOGLE"]

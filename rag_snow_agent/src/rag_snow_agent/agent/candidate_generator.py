@@ -187,7 +187,8 @@ def generate_candidate_sqls(
                 raw_sql = call_llm(sql_messages, model=model, temperature=temp, max_tokens=max_tokens)
                 fallback_sql = _strip_markdown_fences(raw_sql)
                 if fallback_sql and not fallback_sql.startswith("SELECT 1"):
-                    sql = fallback_sql
+                    from ..prompting.sql_compiler import rewrite_date_sharded_tables
+                    sql = rewrite_date_sharded_tables(fallback_sql, schema_slice)
                     log.info("LLM SQL fallback produced %d chars of SQL", len(sql))
         else:
             sql = "SELECT 1 /* plan parse failed */"

@@ -5,7 +5,16 @@ interface Props {
   onChange: (settings: AgentSettings) => void;
 }
 
-const MODELS = ["gpt-5.4", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini"];
+const MODELS = [
+  // Anthropic
+  { value: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  // OpenAI
+  { value: "gpt-5.4", label: "GPT-5.4" },
+  { value: "gpt-5-mini", label: "GPT-5 Mini" },
+  { value: "gpt-4o", label: "GPT-4o" },
+  { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+];
 
 export function SettingsPanel({ settings, onChange }: Props) {
   return (
@@ -18,7 +27,7 @@ export function SettingsPanel({ settings, onChange }: Props) {
           className="w-full bg-gray-800 text-sm rounded px-2 py-1.5 border border-gray-600 focus:border-blue-500 focus:outline-none text-white"
         >
           {MODELS.map((m) => (
-            <option key={m} value={m}>{m}</option>
+            <option key={m.value} value={m.value}>{m.label}</option>
           ))}
         </select>
       </div>
