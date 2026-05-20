@@ -37,4 +37,4 @@ For experiment setup and execution as well as current result review for DSR-SQL,
 
 Cross-project comparison report (DSR vs ReFoRCE vs Spider+GPT-4o): `Cross_Project_Comparison_DSR_ReFoRCE_Spider4o.md`
 
-See docs/SPEC_SPIDER2_SNOW_RAG.md for the implementation spec.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the system architecture and [docs/WEB_UI_DESIGN.md](docs/WEB_UI_DESIGN.md) for the web UI design.
