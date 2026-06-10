@@ -834,7 +834,17 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     parser = build_parser()
     args = parser.parse_args()
-    run_experiment(args)
+    experiment_dir = run_experiment(args)
+    # Signal a quota stop with a distinct exit code (2) so a sweep wrapper can
+    # abort the whole batch instead of marching every remaining arm into the
+    # same exhausted-quota wall.
+    checkpoint = experiment_dir / "checkpoint.json"
+    if checkpoint.exists():
+        try:
+            if json.loads(checkpoint.read_text()).get("quota_stopped"):
+                sys.exit(2)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
