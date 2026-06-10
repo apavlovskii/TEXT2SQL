@@ -10,6 +10,41 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+
+class LLMQuotaExhausted(RuntimeError):
+    """Raised when the provider rejects a call due to exhausted quota/billing.
+
+    This is a *fatal, resumable* condition (unlike a transient rate limit):
+    the caller should stop the run and checkpoint rather than re-attempting
+    every remaining instance, which would just fail identically until the user
+    tops up their account.
+    """
+
+
+# Substrings that indicate the account is out of quota/credits (not a transient
+# burst limit). Matched case-insensitively against the exception text.
+_QUOTA_MARKERS = (
+    "insufficient_quota",
+    "exceeded your current quota",
+    "billing_hard_limit_reached",
+    "billing hard limit",
+    "you have exhausted",
+    "credit balance is too low",
+    "quota exceeded",
+)
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    """Return True if the exception indicates exhausted quota/credits."""
+    text = str(exc).lower()
+    if any(marker in text for marker in _QUOTA_MARKERS):
+        return True
+    # OpenAI surfaces a structured `code`; check it when present.
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and code.lower() in ("insufficient_quota", "billing_hard_limit_reached"):
+        return True
+    return False
+
 # Load .env (primary) or .env.example (fallback) once at import time
 try:
     from dotenv import load_dotenv
@@ -223,10 +258,20 @@ def call_llm(
         max_tokens,
     )
 
-    if _is_anthropic_model(model):
-        result = _call_anthropic(messages, model, temperature, max_tokens)
-    else:
-        result = _call_openai(messages, model, temperature, max_tokens)
+    try:
+        if _is_anthropic_model(model):
+            result = _call_anthropic(messages, model, temperature, max_tokens)
+        else:
+            result = _call_openai(messages, model, temperature, max_tokens)
+    except LLMQuotaExhausted:
+        raise
+    except Exception as exc:
+        # Convert provider quota/credit-exhaustion into a typed, resumable stop
+        # signal so the runner can checkpoint instead of failing every instance.
+        if _is_quota_error(exc):
+            log.error("Provider quota/credits exhausted: %s", str(exc)[:200])
+            raise LLMQuotaExhausted(str(exc)) from exc
+        raise
 
     if result.usage:
         log.info(
@@ -235,6 +280,14 @@ def call_llm(
             result.usage.completion_tokens,
             result.usage.total_tokens,
         )
+        try:
+            from ..observability.instance_telemetry import telemetry
+            telemetry.record_tokens(
+                prompt=result.usage.prompt_tokens,
+                completion=result.usage.completion_tokens,
+            )
+        except Exception:
+            log.debug("Telemetry record_tokens failed", exc_info=True)
     else:
         log.info("LLM response length: %d chars", len(result.content))
 

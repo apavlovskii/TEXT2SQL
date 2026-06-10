@@ -43,6 +43,47 @@ def reset_verifier_cache() -> None:
     _cached_model = None
 
 
+def _mark_verifier_used() -> None:
+    """Best-effort telemetry mark; never raises into the scoring path."""
+    try:
+        from ..observability.instance_telemetry import telemetry
+        telemetry.mark("verifier_used")
+        telemetry.increment("verifier_scores_computed")
+    except Exception:
+        pass
+
+
+def _heuristic_verifier_score(features: dict) -> float:
+    """Deterministic plausibility score in [0, 1] derived from candidate features.
+
+    Used when no trained model is available. Rewards candidates that execute
+    successfully and whose result shape aligns with the inferred expectation;
+    penalizes execution failures and empty results. This is intentionally a
+    transparent, reproducible rule (no learned weights) so the verifier is a
+    real, firing component for ablation without requiring a training step.
+    """
+    score = 0.5  # neutral prior
+
+    # Execution success dominates: a candidate that ran is far more plausible.
+    if features.get("execution_success"):
+        score += 0.30
+    else:
+        score -= 0.30
+
+    # Shape alignment (0..~2): result row-count consistent with the question.
+    score += min(float(features.get("shape_alignment", 0.0)), 2.0) * 0.10
+
+    # Metamorphic agreement nudges plausibility either way (already small).
+    delta = float(features.get("metamorphic_score_delta", 0.0))
+    score += max(-0.10, min(0.10, delta))
+
+    # An empty result from a query that *did* run is mildly suspicious.
+    if features.get("execution_success") and features.get("row_count_bucket", 0) == 0:
+        score -= 0.10
+
+    return max(0.0, min(1.0, score))
+
+
 def score_candidate_semantics(
     instruction: str,
     sql: str,
@@ -51,12 +92,25 @@ def score_candidate_semantics(
     candidate_record: dict | None = None,
     model_path: str | None = None,
 ) -> float:
-    """Score semantic plausibility. Uses trained model if available, else 0.0."""
-    model_artifact = load_verifier(model_path)
-    if model_artifact is None or candidate_record is None:
+    """Score semantic plausibility of a candidate in [0, 1].
+
+    Uses the trained model when one is available; otherwise falls back to a
+    deterministic heuristic (:func:`_heuristic_verifier_score`). Returns 0.0
+    only when there is no candidate to score. Marks ``verifier_used`` telemetry
+    whenever a real score is computed (model or heuristic).
+    """
+    if candidate_record is None:
         return 0.0
 
     features = extract_candidate_features(candidate_record, instruction)
+
+    model_artifact = load_verifier(model_path)
+    if model_artifact is None:
+        # No learned model on disk — use the transparent heuristic instead of
+        # silently returning 0.0 (which left the verifier dormant historically).
+        score = _heuristic_verifier_score(features)
+        _mark_verifier_used()
+        return score
 
     # Use stored feature names for consistent ordering
     if isinstance(model_artifact, dict) and "model" in model_artifact:
@@ -70,7 +124,11 @@ def score_candidate_semantics(
     X = [[features.get(f, 0.0) for f in feature_names]]
     try:
         proba = model.predict_proba(X)
-        return float(proba[0][1])  # probability of class 1
+        score = float(proba[0][1])  # probability of class 1
+        _mark_verifier_used()
+        return score
     except Exception:
-        log.warning("Verifier predict_proba failed", exc_info=True)
-        return 0.0
+        log.warning("Verifier predict_proba failed; using heuristic", exc_info=True)
+        score = _heuristic_verifier_score(features)
+        _mark_verifier_used()
+        return score

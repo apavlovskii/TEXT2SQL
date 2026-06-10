@@ -252,6 +252,13 @@ def expand_join_graph_neighbors(
     This is a targeted expansion: it only fires when the instruction contains
     spatial keywords (within, radius, distance, etc.) and the neighbor table
     has columns matching geo patterns (lat, lon, geometry, state_name, etc.).
+
+    NOTE (ablation scope): this component is *geospatial-specific by design*.
+    On a benchmark that excludes geospatial databases it will (correctly) never
+    fire — ``join_graph_used`` stays 0. It is therefore deliberately excluded
+    from non-geo ablation conclusions rather than treated as a dormant bug. It
+    additionally requires JoinCards (``object_type="join"``) in the collection;
+    those are schema-derived only (no gold-SQL ingestion) to avoid test leakage.
     """
     if not _GEO_QUESTION_RE.search(instruction):
         return schema_slice
@@ -336,5 +343,11 @@ def expand_join_graph_neighbors(
             "Join-graph neighbor expansion: added %d tables with geo columns: %s",
             len(added), ", ".join(added),
         )
+        try:
+            from ..observability.instance_telemetry import telemetry
+            telemetry.set("join_graph_neighbors_added", len(added))
+            telemetry.mark("join_graph_used")
+        except Exception:
+            log.debug("Telemetry set failed", exc_info=True)
 
     return schema_slice

@@ -29,15 +29,27 @@ def _make_candidate(**overrides):
     return base
 
 
-def test_returns_zero_when_no_model():
+def test_uses_heuristic_when_no_model():
+    """With no trained model but a candidate record, fall back to the
+    deterministic heuristic (non-zero) rather than the old dormant 0.0."""
     reset_verifier_cache()
-    score = score_candidate_semantics(
+    good = score_candidate_semantics(
         instruction="count users",
         sql="SELECT COUNT(*) FROM users",
-        candidate_record=_make_candidate(),
+        candidate_record=_make_candidate(execution_success=True, row_count=5),
         model_path="/nonexistent/path/model.joblib",
     )
-    assert score == 0.0
+    bad = score_candidate_semantics(
+        instruction="count users",
+        sql="SELECT COUNT(*) FROM users",
+        candidate_record=_make_candidate(execution_success=False, row_count=None),
+        model_path="/nonexistent/path/model.joblib",
+    )
+    # Heuristic is bounded, fires (non-zero), and ranks a runnable candidate
+    # above a failed one.
+    assert 0.0 < good <= 1.0
+    assert 0.0 <= bad <= 1.0
+    assert good > bad
 
 
 def test_returns_zero_when_no_candidate_record():

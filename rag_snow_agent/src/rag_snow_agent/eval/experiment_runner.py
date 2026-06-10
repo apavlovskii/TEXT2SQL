@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -25,6 +26,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+
+from ..agent.llm_client import LLMQuotaExhausted
 
 log = logging.getLogger(__name__)
 
@@ -134,6 +137,9 @@ def apply_cli_toggles(config: dict, args: argparse.Namespace) -> dict:
     if args.disable_sample_records:
         features["sample_records"] = False
         config.setdefault("sample_records", {})["enabled"] = False
+    if args.disable_semantic:
+        features["semantic"] = False
+        config.setdefault("semantic_layer", {})["enabled"] = False
 
     # CLI overrides for model / best_of_n / max_repairs
     if args.model:
@@ -160,6 +166,7 @@ def write_manifest(
         "disable_verification": args.disable_verification,
         "disable_join_graph": args.disable_join_graph,
         "disable_sample_records": args.disable_sample_records,
+        "disable_semantic": getattr(args, "disable_semantic", False),
     }
     manifest = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -177,18 +184,82 @@ def write_manifest(
     return manifest_path
 
 
-def load_instances(split_jsonl: Path, limit: int | None = None) -> list[dict]:
-    """Load instances from a JSONL file."""
+# Databases whose schema/questions are geospatial. Excluded when
+# --exclude_geospatial is set (the geo-targeted join-graph component is the
+# only place geo handling lives, and we keep it out of the main ablation).
+_GEOSPATIAL_DB_RE = re.compile(
+    r"(GEO|OPENSTREETMAP|MAP_DATA|SPATIAL|CENSUS_PLACES|WORLDPOP|BOUNDAR)",
+    re.IGNORECASE,
+)
+
+
+def is_geospatial_db(db_id: str | None) -> bool:
+    """Return True if the db_id names a geospatial database."""
+    return bool(db_id and _GEOSPATIAL_DB_RE.search(db_id))
+
+
+def load_instances(
+    split_jsonl: Path,
+    limit: int | None = None,
+    exclude_geospatial: bool = False,
+) -> list[dict]:
+    """Load instances from a JSONL file.
+
+    When *exclude_geospatial* is set, geospatial-database instances are filtered
+    out *before* the limit is applied, so ``--limit 100 --exclude_geospatial``
+    yields the first 100 non-geospatial instances (not 100-minus-the-geo-ones).
+    """
     instances = []
+    skipped_geo = 0
     with open(split_jsonl) as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
-            instances.append(json.loads(line))
+            inst = json.loads(line)
+            if exclude_geospatial and is_geospatial_db(inst.get("db_id")):
+                skipped_geo += 1
+                continue
+            instances.append(inst)
             if limit and len(instances) >= limit:
                 break
+    if exclude_geospatial:
+        log.info("Excluded %d geospatial instances", skipped_geo)
     return instances
+
+
+def _load_completed(results_path: Path) -> tuple[set[str], dict]:
+    """Read an existing results file for resume.
+
+    Returns the set of already-recorded instance_ids and a counts dict
+    ({successes, failures, errors}) so a resumed run continues its tally.
+    Quota-stopped instances were never written, so they are absent here and
+    will be retried automatically.
+    """
+    completed: set[str] = set()
+    counts = {"successes": 0, "failures": 0, "errors": 0}
+    if not results_path.exists():
+        return completed, counts
+    with open(results_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            iid = rec.get("instance_id")
+            if not iid:
+                continue
+            completed.add(iid)
+            if rec.get("error_type") == "runner_error":
+                counts["errors"] += 1
+            elif rec.get("success"):
+                counts["successes"] += 1
+            else:
+                counts["failures"] += 1
+    return completed, counts
 
 
 def preflight_check(
@@ -281,25 +352,41 @@ def preflight_check(
             print(f"       The schema_cards collection has 0 items.")
             print(f"       Fix: run build_index for required databases first.")
         else:
-            # Count items per db_id
-            all_meta = col.get(include=["metadatas"])
-            metas = all_meta.get("metadatas") or []
-            from collections import Counter
-            db_counts: Counter = Counter()
-            type_counts: Counter = Counter()
-            for m in metas:
-                db_counts[m.get("db_id", "?")] += 1
-                type_counts[m.get("object_type", "?")] += 1
-
+            # Scoped per-db_id counts (avoid pulling 100k+ metadatas at once,
+            # which trips SQLite's 999/32766-variable cap inside Chroma).
             print(f"OK ({total_items:,} items)")
-            print(f"       Cards:   {', '.join(f'{t}={c}' for t, c in sorted(type_counts.items()))}")
-            print(f"       DBs:     {', '.join(f'{db}({c})' for db, c in sorted(db_counts.items()))}")
 
-            # Verify required db_ids are indexed
             if db_ids:
-                missing = [d for d in db_ids if d not in db_counts]
+                db_counts: dict[str, int] = {}
+                missing: list[str] = []
+                for db in db_ids:
+                    try:
+                        n = 0
+                        offset = 0
+                        batch = 1000
+                        while True:
+                            chunk = col.get(
+                                where={"db_id": db},
+                                limit=batch,
+                                offset=offset,
+                                include=[],
+                            )
+                            ids = chunk.get("ids") or []
+                            n += len(ids)
+                            if len(ids) < batch:
+                                break
+                            offset += batch
+                        db_counts[db] = n
+                        if n == 0:
+                            missing.append(db)
+                    except Exception as e:
+                        db_counts[db] = -1
+                        missing.append(db)
+                        log.debug("Chroma scoped count failed for %s: %s", db, e)
+
+                print(f"       DBs:     {', '.join(f'{db}({c})' for db, c in sorted(db_counts.items()))}")
                 if missing:
-                    print(f"       WARNING: missing indexes for: {', '.join(missing)}")
+                    print(f"       WARNING: missing/empty indexes for: {', '.join(missing)}")
                     print(f"       Fix: run build_index for those databases.")
                 else:
                     print(f"       All required DBs indexed: {', '.join(db_ids)}")
@@ -361,7 +448,9 @@ def run_experiment(args: argparse.Namespace) -> Path:
     experiment_dir.mkdir(parents=True, exist_ok=True)
 
     # Load instances (before preflight so we can check db_ids)
-    instances = load_instances(split_path, args.limit)
+    instances = load_instances(
+        split_path, args.limit, exclude_geospatial=args.exclude_geospatial
+    )
     log.info("Loaded %d instances from %s", len(instances), split_path)
 
     # Preflight connectivity checks
@@ -379,19 +468,50 @@ def run_experiment(args: argparse.Namespace) -> Path:
 
     # Run instances
     results_path = experiment_dir / "instance_results.jsonl"
+    checkpoint_path = experiment_dir / "checkpoint.json"
     successes = 0
     failures = 0
     errors = 0
 
-    with open(results_path, "w") as results_file:
+    # Resume support: skip instances already recorded, append rather than
+    # overwrite. Counts are seeded from prior results so the summary is correct.
+    completed_ids, prior_counts = _load_completed(results_path) if args.resume else (set(), {})
+    if args.resume and completed_ids:
+        successes = prior_counts.get("successes", 0)
+        failures = prior_counts.get("failures", 0)
+        errors = prior_counts.get("errors", 0)
+        log.info("Resuming: %d instances already complete, will skip them", len(completed_ids))
+    file_mode = "a" if (args.resume and completed_ids) else "w"
+
+    quota_stopped = False
+    stopped_at: str | None = None
+    with open(results_path, file_mode) as results_file:
         for i, instance in enumerate(instances, 1):
             instance_id = instance.get("instance_id", f"unknown_{i}")
             instruction = instance.get("instruction", "")
             db_id = instance.get("db_id", "")
             external_knowledge = instance.get("external_knowledge")
 
+            if instance_id in completed_ids:
+                log.info("[%d/%d] Skipping %s (already complete)", i, len(instances), instance_id)
+                continue
+
             log.info("[%d/%d] Processing %s", i, len(instances), instance_id)
             t_start = time.monotonic()
+
+            # Reset per-instance telemetry (tokens + component activation flags)
+            try:
+                from ..observability.instance_telemetry import telemetry
+                telemetry.reset()
+            except Exception:
+                log.debug("Telemetry reset failed", exc_info=True)
+
+            # Track ablation-relevant inputs computed in this block (used below)
+            ek_injected = False
+            semantic_used = False
+            sample_used = False
+            geo_routed = False
+            model_used: str | None = None
 
             try:
                 # Import here to avoid circular imports and to allow
@@ -433,11 +553,14 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 bon = agent_cfg.get("best_of_n", 1)
                 max_repairs = agent_cfg.get("max_repairs", 2)
                 memory_enabled = config.get("memory", {}).get("enabled", True)
+                verifier_enabled = config.get("verifier", {}).get("enabled", True)
                 model = llm_cfg.get("model", "gpt-4o-mini")
                 geo_model = llm_cfg.get("geo_model")
                 if geo_model and _is_geo_query(external_knowledge, instruction):
                     log.info("Geo query detected for %s — using model %s instead of %s", instance_id, geo_model, model)
                     model = geo_model
+                    geo_routed = (geo_model != llm_cfg.get("model"))
+                model_used = model
                 max_tokens = llm_cfg.get("max_output_tokens", 4096)
                 decompose = agent_cfg.get("decompose_questions", False)
 
@@ -454,6 +577,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                         )
                         if semantic_context:
                             log.info("Semantic context retrieved (%d chars) for %s", len(semantic_context), instance_id)
+                            semantic_used = True
                         else:
                             log.warning("Semantic context is EMPTY for %s", instance_id)
                     except Exception as exc:
@@ -476,6 +600,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                         )
                         if sample_context:
                             log.info("Sample records context retrieved (%d chars) for %s", len(sample_context), instance_id)
+                            sample_used = True
                         else:
                             log.info("No sample records found for %s tables", instance_id)
                     except Exception as exc:
@@ -491,6 +616,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                         else:
                             semantic_context = ek_section
                         log.info("Injected external knowledge: %s (%d chars)", external_knowledge, len(ek_content))
+                        ek_injected = True
                     else:
                         log.warning("External knowledge file not found: %s", external_knowledge)
 
@@ -510,6 +636,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     max_repairs=max_repairs,
                     max_tokens=max_tokens,
                     memory_enabled=memory_enabled,
+                    enable_verifier=verifier_enabled,
                     chroma_dir=args.chroma_dir,
                     gold_dir=args.gold_dir,
                     max_same_error_type=args.max_same_error_type,
@@ -554,6 +681,23 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 else:
                     failures += 1
 
+            except LLMQuotaExhausted as exc:
+                # Fatal-but-resumable: stop now and checkpoint. Do NOT record this
+                # instance as failed — it never got a fair attempt, so resume will
+                # retry it cleanly once the user tops up their token quota.
+                log.error(
+                    "Token/quota limit reached at %s — stopping run and writing checkpoint. "
+                    "Top up your quota, then re-run with --resume to continue from here. (%s)",
+                    instance_id, str(exc)[:160],
+                )
+                quota_stopped = True
+                stopped_at = instance_id
+                try:
+                    executor.close()  # noqa: F821 — best-effort cleanup if defined
+                except Exception:
+                    pass
+                break
+
             except Exception as exc:
                 log.error("Instance %s failed with error: %s", instance_id, exc)
                 record = {
@@ -569,6 +713,35 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     "error_type": "runner_error",
                 }
                 errors += 1
+
+            # Attach per-instance telemetry: tokens, wall-clock, component flags
+            try:
+                from ..observability.instance_telemetry import telemetry
+                snap = telemetry.snapshot()
+            except Exception:
+                snap = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                        "llm_calls_observed": 0, "flags": {}, "counters": {}, "values": {}}
+            wall_clock_sec = round(time.monotonic() - t_start, 2)
+
+            telemetry_block = {
+                "prompt_tokens": snap.get("prompt_tokens", 0),
+                "completion_tokens": snap.get("completion_tokens", 0),
+                "total_tokens": snap.get("total_tokens", 0),
+                "llm_calls_observed": snap.get("llm_calls_observed", 0),
+                "wall_clock_sec": wall_clock_sec,
+                "model_used": model_used,
+                "geo_routed": geo_routed,
+                "semantic_used": semantic_used,
+                "sample_used": sample_used,
+                "external_knowledge_injected": ek_injected,
+                "memory_hit": False,  # trace memory is persist-only in current production path
+                "verifier_used": bool(snap.get("flags", {}).get("verifier_used")),
+                "date_shard_rewrite_used": bool(snap.get("flags", {}).get("date_shard_rewrite_used")),
+                "date_shard_rewrites": int(snap.get("counters", {}).get("date_shard_rewrites", 0)),
+                "join_graph_used": bool(snap.get("flags", {}).get("join_graph_used")),
+                "join_graph_neighbors_added": int(snap.get("values", {}).get("join_graph_neighbors_added", 0)),
+            }
+            record["telemetry"] = telemetry_block
 
             results_file.write(json.dumps(record) + "\n")
             results_file.flush()
@@ -588,15 +761,39 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 flush=True,
             )
 
+    # Write checkpoint state (records where the run stopped, for clean resume)
+    processed = successes + failures + errors
+    checkpoint = {
+        "experiment": args.experiment,
+        "total_instances": len(instances),
+        "processed": processed,
+        "successes": successes,
+        "failures": failures,
+        "errors": errors,
+        "quota_stopped": quota_stopped,
+        "stopped_at": stopped_at,
+        "complete": (not quota_stopped) and processed >= len(instances),
+    }
+    with open(checkpoint_path, "w") as cf:
+        json.dump(checkpoint, cf, indent=2)
+
     # Summary
     total = len(instances)
     print(f"\n{'='*50}")
     print(f"Experiment: {args.experiment}")
     print(f"Total instances: {total}")
+    print(f"Processed this run + prior: {processed}/{total}")
     print(f"Successes: {successes} ({100*successes/total:.1f}%)" if total else "No instances")
     print(f"Failures: {failures}")
     print(f"Errors: {errors}")
+    if quota_stopped:
+        print(f"\n⚠  STOPPED at {stopped_at}: token/quota limit reached.")
+        print(f"   {processed}/{total} done. Top up quota, then resume with:")
+        print(f"   ... --experiment {args.experiment} --resume "
+              f"{'--exclude_geospatial ' if args.exclude_geospatial else ''}"
+              f"{('--limit ' + str(args.limit)) if args.limit else ''}".rstrip())
     print(f"Results: {results_path}")
+    print(f"Checkpoint: {checkpoint_path}")
     print(f"{'='*50}")
 
     return experiment_dir
@@ -608,6 +805,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--credentials", default="rag_snow_agent/snowflake_credentials.json")
     parser.add_argument("--experiment", required=True, help="Experiment name")
     parser.add_argument("--limit", type=int, default=None, help="Max instances to process")
+    parser.add_argument("--exclude_geospatial", action="store_true",
+                        help="Skip geospatial databases (GEO/OPENSTREETMAP/MAP_DATA/...) before applying --limit")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume an interrupted run: skip already-recorded instances and append new results")
     parser.add_argument("--model", default=None, help="LLM model override")
     parser.add_argument("--best_of_n", type=int, default=None, help="Best-of-N count")
     parser.add_argument("--max_repairs", type=int, default=None, help="Max repair iterations per candidate")
@@ -622,6 +823,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable_verification", action="store_true")
     parser.add_argument("--disable_join_graph", action="store_true")
     parser.add_argument("--disable_sample_records", action="store_true")
+    parser.add_argument("--disable_semantic", action="store_true", help="Disable semantic_layer retrieval + external_knowledge injection")
     parser.add_argument("--skip_preflight", action="store_true", help="Skip Snowflake/OpenAI connectivity checks")
     parser.add_argument("--gold_dir", default=None, help="Path to gold evaluation directory (enables gold-match verification)")
     parser.add_argument("--max_same_error_type", type=int, default=3, help="Stop retrying after N same-type errors per candidate (default 3)")

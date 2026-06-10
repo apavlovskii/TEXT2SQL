@@ -94,6 +94,7 @@ def run_best_of_n(
     stop_on_repeated_error: bool = True,
     strategies: list[str] | None = None,
     scoring: dict | None = None,
+    enable_verifier: bool = True,
     enable_fingerprinting: bool = True,
     enable_metamorphic: bool = True,
     max_metamorphic_checks: int = 2,
@@ -212,12 +213,18 @@ def run_best_of_n(
         else:
             cr["metamorphic"] = {"checks_run": [], "score_delta": 0.0}
 
-        # Verifier score (stub)
-        cr["verifier_score"] = score_candidate_semantics(
-            instruction=instruction,
-            sql=cr.get("final_sql", ""),
-            schema_slice=schema_slice,
-        )
+        # Verifier score — semantic plausibility (learned model or heuristic).
+        # Pass the full candidate record so the verifier can extract features;
+        # gated by enable_verifier so the ablation toggle actually takes effect.
+        if enable_verifier:
+            cr["verifier_score"] = score_candidate_semantics(
+                instruction=instruction,
+                sql=cr.get("final_sql", ""),
+                schema_slice=schema_slice,
+                candidate_record=cr,
+            )
+        else:
+            cr["verifier_score"] = 0.0
 
         # Remove exec_result before scoring (not serializable)
         cr.pop("exec_result", None)
