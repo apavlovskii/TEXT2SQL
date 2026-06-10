@@ -21,6 +21,9 @@ MODEL="${MODEL:-gpt-5.4-mini}"
 LIMIT="${LIMIT:-100}"
 BON="${BON:-4}"
 MAX_REPAIRS="${MAX_REPAIRS:-3}"
+# Prefix for experiment dir names. Set this per run (e.g. EXP_PREFIX=n30_) so a
+# new sweep NEVER resumes into stale dirs from a previous, differently-coded run.
+EXP_PREFIX="${EXP_PREFIX:-}"
 
 SPLIT="../Spider2/spider2-snow/spider2-snow.jsonl"
 CREDS="snowflake_credentials.json"
@@ -31,7 +34,7 @@ GOLD="../Spider2/spider2-snow/evaluation_suite/gold/"
 PREFLIGHT="${PREFLIGHT:-1}"
 
 run() {
-    local name="$1"; shift
+    local name="${EXP_PREFIX}$1"; shift
     local preflight_flag="$1"; shift
     echo
     echo "================================================================"
@@ -97,6 +100,7 @@ echo "  Sweep complete -- $(date -u +%FT%TZ)"
 echo "  Rank components with:"
 echo "    uv run python -m rag_snow_agent.eval.rank_ablation \\"
 echo "      --experiments_dir reports/experiments \\"
-echo "      --arms A0_full A1_no_best_of_n A2_no_verification A3_no_repair \\"
-echo "             A4_no_sample_records A6_no_semantic A8_no_verifier A7_baseline"
+echo "      --arms ${EXP_PREFIX}A0_full ${EXP_PREFIX}A1_no_best_of_n ${EXP_PREFIX}A2_no_verification \\"
+echo "             ${EXP_PREFIX}A3_no_repair ${EXP_PREFIX}A4_no_sample_records ${EXP_PREFIX}A6_no_semantic \\"
+echo "             ${EXP_PREFIX}A8_no_verifier ${EXP_PREFIX}A7_baseline"
 echo "================================================================"

@@ -113,7 +113,9 @@ def _parse_arm_name(arm: str) -> tuple[str, str | None]:
     runs recorded manifest toggles unreliably. Returns:
       ("full", None) | ("baseline", None) | ("component", <label>) | ("other", None)
     """
-    stem = re.sub(r"^a\d+[_-]", "", arm.lower())  # strip leading A0_/A7- etc.
+    # Strip an optional run prefix plus the A<n> arm token, e.g.
+    # "n30_A1_no_best_of_n" -> "no_best_of_n", "A0_full" -> "full".
+    stem = re.sub(r"^(?:[a-z0-9]+_)*?a\d+[_-]", "", arm.lower())
     if "full" in stem:
         return ("full", None)
     if "baseline" in stem:
