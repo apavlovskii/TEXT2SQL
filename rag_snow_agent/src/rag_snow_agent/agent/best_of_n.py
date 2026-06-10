@@ -21,6 +21,15 @@ from .verifier import score_candidate_semantics
 log = logging.getLogger(__name__)
 
 
+def _mark_verification_used() -> None:
+    """Best-effort telemetry mark when fingerprint/metamorphic verification runs."""
+    try:
+        from ..observability.instance_telemetry import telemetry
+        telemetry.mark("verification_used")
+    except Exception:
+        pass
+
+
 def _candidate_to_result(
     candidate: CandidateItem,
     final_sql: str,
@@ -196,6 +205,7 @@ def run_best_of_n(
                 "null_ratios": fp.null_ratios,
                 "numeric_stats": fp.numeric_stats,
             }
+            _mark_verification_used()
         else:
             cr["result_fingerprint"] = None
 
@@ -210,6 +220,7 @@ def run_best_of_n(
                 max_checks=max_metamorphic_checks,
             )
             cr["metamorphic"] = meta
+            _mark_verification_used()
         else:
             cr["metamorphic"] = {"checks_run": [], "score_delta": 0.0}
 

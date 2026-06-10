@@ -77,8 +77,8 @@ run A3_no_repair           "--skip_preflight"  --best_of_n "$BON" --max_repairs 
 # A4 — drop Sample-records prompting
 run A4_no_sample_records   "--skip_preflight"  --best_of_n "$BON" --max_repairs "$MAX_REPAIRS" --disable_sample_records
 
-# A5 — drop Join-graph neighbor expansion (geo-only; expected near-zero on non-geo set)
-run A5_no_join_graph       "--skip_preflight"  --best_of_n "$BON" --max_repairs "$MAX_REPAIRS" --disable_join_graph
+# A5 — Join-graph is geospatial-only (inert on the non-geo set), so it is
+#      intentionally NOT run here. Documented as geo-only in the audit.
 
 # A6 — drop Semantic layer
 run A6_no_semantic         "--skip_preflight"  --best_of_n "$BON" --max_repairs "$MAX_REPAIRS" --disable_semantic
@@ -98,6 +98,5 @@ echo "  Rank components with:"
 echo "    uv run python -m rag_snow_agent.eval.rank_ablation \\"
 echo "      --experiments_dir reports/experiments \\"
 echo "      --arms A0_full A1_no_best_of_n A2_no_verification A3_no_repair \\"
-echo "             A4_no_sample_records A5_no_join_graph A6_no_semantic \\"
-echo "             A8_no_verifier A7_baseline"
+echo "             A4_no_sample_records A6_no_semantic A8_no_verifier A7_baseline"
 echo "================================================================"

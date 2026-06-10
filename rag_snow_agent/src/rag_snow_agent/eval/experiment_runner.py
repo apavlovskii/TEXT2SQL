@@ -554,6 +554,9 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 max_repairs = agent_cfg.get("max_repairs", 2)
                 memory_enabled = config.get("memory", {}).get("enabled", True)
                 verifier_enabled = config.get("verifier", {}).get("enabled", True)
+                verify_cfg = agent_cfg.get("verification", {})
+                fingerprinting_enabled = verify_cfg.get("enable_fingerprinting", True)
+                metamorphic_enabled = verify_cfg.get("enable_metamorphic", True)
                 model = llm_cfg.get("model", "gpt-4o-mini")
                 geo_model = llm_cfg.get("geo_model")
                 if geo_model and _is_geo_query(external_knowledge, instruction):
@@ -637,6 +640,8 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     max_tokens=max_tokens,
                     memory_enabled=memory_enabled,
                     enable_verifier=verifier_enabled,
+                    enable_fingerprinting=fingerprinting_enabled,
+                    enable_metamorphic=metamorphic_enabled,
                     chroma_dir=args.chroma_dir,
                     gold_dir=args.gold_dir,
                     max_same_error_type=args.max_same_error_type,
@@ -736,6 +741,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 "external_knowledge_injected": ek_injected,
                 "memory_hit": False,  # trace memory is persist-only in current production path
                 "verifier_used": bool(snap.get("flags", {}).get("verifier_used")),
+                "verification_used": bool(snap.get("flags", {}).get("verification_used")),
                 "date_shard_rewrite_used": bool(snap.get("flags", {}).get("date_shard_rewrite_used")),
                 "date_shard_rewrites": int(snap.get("counters", {}).get("date_shard_rewrites", 0)),
                 "join_graph_used": bool(snap.get("flags", {}).get("join_graph_used")),
