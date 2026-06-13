@@ -183,6 +183,12 @@ def rewrite_date_sharded_tables(sql: str, schema_slice: SchemaSlice | None) -> s
             "Date-shard rewrite: expanded %s* (saw %d distinct shard refs) into UNION ALL of %d tables (%s — %s)",
             base_qname, len(shards_in_sql), len(daily_tables), daily_tables[0], daily_tables[-1],
         )
+        try:
+            from ..observability.instance_telemetry import telemetry
+            telemetry.increment("date_shard_rewrites")
+            telemetry.mark("date_shard_rewrite_used")
+        except Exception:
+            log.debug("Telemetry increment failed", exc_info=True)
 
     return sql
 

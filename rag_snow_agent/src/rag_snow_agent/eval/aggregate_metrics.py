@@ -34,6 +34,18 @@ def load_instance_results(experiment_dir: Path) -> list[dict]:
     return records
 
 
+def _percentile(sorted_vals: list, pct: float) -> float:
+    if not sorted_vals:
+        return 0.0
+    idx = int(pct * len(sorted_vals))
+    idx = min(idx, len(sorted_vals) - 1)
+    return float(sorted_vals[idx])
+
+
+def _tele(r: dict) -> dict:
+    return r.get("telemetry") or {}
+
+
 def compute_metrics(records: list[dict]) -> dict:
     """Compute aggregate metrics from instance result records."""
     total = len(records)
@@ -49,6 +61,12 @@ def compute_metrics(records: list[dict]) -> dict:
             "failure_taxonomy": {},
             "candidate_count_distribution": {},
             "memory_hit_rate": None,
+            "total_tokens": 0,
+            "avg_total_tokens": 0.0,
+            "median_total_tokens": 0.0,
+            "p95_total_tokens": 0.0,
+            "avg_wall_clock_sec": 0.0,
+            "component_activation_rate": {},
         }
 
     success_count = sum(1 for r in records if r.get("success"))
@@ -60,11 +78,8 @@ def compute_metrics(records: list[dict]) -> dict:
     avg_llm = round(statistics.mean(llm_calls), 2) if llm_calls else 0.0
     median_llm = round(statistics.median(llm_calls), 2) if llm_calls else 0.0
 
-    # p95
     sorted_llm = sorted(llm_calls)
-    p95_idx = int(0.95 * len(sorted_llm))
-    p95_idx = min(p95_idx, len(sorted_llm) - 1)
-    p95_llm = float(sorted_llm[p95_idx]) if sorted_llm else 0.0
+    p95_llm = _percentile(sorted_llm, 0.95)
 
     avg_repairs = round(statistics.mean(repair_counts), 2) if repair_counts else 0.0
 
@@ -80,13 +95,50 @@ def compute_metrics(records: list[dict]) -> dict:
     candidate_counts = [r.get("candidate_count", 1) for r in records]
     candidate_dist = dict(Counter(str(c) for c in candidate_counts))
 
-    # Memory hit rate
+    # Memory hit rate (legacy field; telemetry block also carries memory_hit)
     memory_hits = [r.get("memory_hit") for r in records if r.get("memory_hit") is not None]
     memory_hit_rate = (
         round(sum(1 for h in memory_hits if h) / len(memory_hits), 3)
-        if memory_hits
-        else None
+        if memory_hits else None
     )
+
+    # ── Token + cost telemetry ─────────────────────────────────────────
+    total_tokens_per = [_tele(r).get("total_tokens", 0) for r in records]
+    prompt_tokens_per = [_tele(r).get("prompt_tokens", 0) for r in records]
+    completion_tokens_per = [_tele(r).get("completion_tokens", 0) for r in records]
+    wall_clock_per = [_tele(r).get("wall_clock_sec", 0.0) for r in records]
+
+    total_tokens_sum = sum(total_tokens_per)
+    avg_total_tokens = round(statistics.mean(total_tokens_per), 2) if total_tokens_per else 0.0
+    median_total_tokens = round(statistics.median(total_tokens_per), 2) if total_tokens_per else 0.0
+    p95_total_tokens = _percentile(sorted(total_tokens_per), 0.95)
+    avg_wall_clock = round(statistics.mean(wall_clock_per), 2) if wall_clock_per else 0.0
+
+    tokens_per_success = round(total_tokens_sum / success_count, 1) if success_count else 0.0
+
+    # ── Component activation rates ─────────────────────────────────────
+    flags_to_count = [
+        "best_of_n_used",
+        "semantic_used",
+        "sample_used",
+        "external_knowledge_injected",
+        "verifier_used",
+        "date_shard_rewrite_used",
+        "join_graph_used",
+        "geo_routed",
+        "memory_hit",
+    ]
+    activation = {}
+    for fn in flags_to_count:
+        # best_of_n_used is on the top-level record; others are inside telemetry
+        if fn == "best_of_n_used":
+            hits = sum(1 for r in records if r.get(fn))
+        else:
+            hits = sum(1 for r in records if _tele(r).get(fn))
+        activation[fn] = {
+            "count": hits,
+            "rate": round(hits / total, 3),
+        }
 
     return {
         "total_instances": total,
@@ -99,6 +151,16 @@ def compute_metrics(records: list[dict]) -> dict:
         "failure_taxonomy": failure_taxonomy,
         "candidate_count_distribution": candidate_dist,
         "memory_hit_rate": memory_hit_rate,
+        "total_tokens": total_tokens_sum,
+        "total_prompt_tokens": sum(prompt_tokens_per),
+        "total_completion_tokens": sum(completion_tokens_per),
+        "avg_total_tokens": avg_total_tokens,
+        "median_total_tokens": median_total_tokens,
+        "p95_total_tokens": p95_total_tokens,
+        "tokens_per_success": tokens_per_success,
+        "avg_wall_clock_sec": avg_wall_clock,
+        "total_wall_clock_sec": round(sum(wall_clock_per), 1),
+        "component_activation_rate": activation,
     }
 
 
