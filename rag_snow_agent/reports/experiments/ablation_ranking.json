@@ -1,0 +1,199 @@
+{
+  "full_arm": "n30_A0_full",
+  "full_accuracy_pct": 90.0,
+  "bootstrap_iters": 2000,
+  "components": [
+    {
+      "arm": "n30_A7_baseline",
+      "component": "ALL components (baseline)",
+      "is_baseline": true,
+      "n_paired": 30,
+      "rescued": 26,
+      "broken": 0,
+      "rescued_ids": [
+        "sf_bq001",
+        "sf_bq002",
+        "sf_bq003",
+        "sf_bq004",
+        "sf_bq008",
+        "sf_bq009",
+        "sf_bq010",
+        "sf_bq011",
+        "sf_bq026",
+        "sf_bq027",
+        "sf_bq029",
+        "sf_bq033",
+        "sf_bq091",
+        "sf_bq099",
+        "sf_bq127",
+        "sf_bq209",
+        "sf_bq210",
+        "sf_bq211",
+        "sf_bq213",
+        "sf_bq215",
+        "sf_bq216",
+        "sf_bq247",
+        "sf_bq268",
+        "sf_bq269",
+        "sf_bq275",
+        "sf_bq374"
+      ],
+      "broken_ids": [],
+      "net": 26,
+      "net_frac": 0.8666666666666667,
+      "net_frac_pct": 86.7,
+      "ci_lo_pct": 73.3,
+      "ci_hi_pct": 96.7,
+      "tier": "Tier 1 \u2014 dominant"
+    },
+    {
+      "arm": "n30_A1_no_best_of_n",
+      "component": "best_of_n",
+      "is_baseline": false,
+      "n_paired": 30,
+      "rescued": 24,
+      "broken": 0,
+      "rescued_ids": [
+        "sf_bq002",
+        "sf_bq003",
+        "sf_bq004",
+        "sf_bq008",
+        "sf_bq009",
+        "sf_bq010",
+        "sf_bq011",
+        "sf_bq026",
+        "sf_bq027",
+        "sf_bq029",
+        "sf_bq033",
+        "sf_bq091",
+        "sf_bq099",
+        "sf_bq127",
+        "sf_bq209",
+        "sf_bq210",
+        "sf_bq213",
+        "sf_bq215",
+        "sf_bq216",
+        "sf_bq247",
+        "sf_bq268",
+        "sf_bq269",
+        "sf_bq275",
+        "sf_bq374"
+      ],
+      "broken_ids": [],
+      "net": 24,
+      "net_frac": 0.8,
+      "net_frac_pct": 80.0,
+      "ci_lo_pct": 63.3,
+      "ci_hi_pct": 93.3,
+      "tier": "Tier 1 \u2014 dominant"
+    },
+    {
+      "arm": "n30_A3_no_repair",
+      "component": "repair",
+      "is_baseline": false,
+      "n_paired": 30,
+      "rescued": 6,
+      "broken": 1,
+      "rescued_ids": [
+        "sf_bq002",
+        "sf_bq004",
+        "sf_bq010",
+        "sf_bq027",
+        "sf_bq127",
+        "sf_bq275"
+      ],
+      "broken_ids": [
+        "sf_bq214"
+      ],
+      "net": 5,
+      "net_frac": 0.16666666666666666,
+      "net_frac_pct": 16.7,
+      "ci_lo_pct": 0.0,
+      "ci_hi_pct": 33.3,
+      "tier": "Tier 3 \u2014 negligible (within noise)"
+    },
+    {
+      "arm": "n30_A4_no_sample_records",
+      "component": "sample_records",
+      "is_baseline": false,
+      "n_paired": 30,
+      "rescued": 3,
+      "broken": 0,
+      "rescued_ids": [
+        "sf_bq010",
+        "sf_bq026",
+        "sf_bq275"
+      ],
+      "broken_ids": [],
+      "net": 3,
+      "net_frac": 0.1,
+      "net_frac_pct": 10.0,
+      "ci_lo_pct": 0.0,
+      "ci_hi_pct": 23.3,
+      "tier": "Tier 3 \u2014 negligible (within noise)"
+    },
+    {
+      "arm": "n30_A2_no_verification",
+      "component": "verification (fingerprint/metamorphic)",
+      "is_baseline": false,
+      "n_paired": 30,
+      "rescued": 3,
+      "broken": 1,
+      "rescued_ids": [
+        "sf_bq003",
+        "sf_bq010",
+        "sf_bq026"
+      ],
+      "broken_ids": [
+        "sf_bq214"
+      ],
+      "net": 2,
+      "net_frac": 0.06666666666666667,
+      "net_frac_pct": 6.7,
+      "ci_lo_pct": -6.7,
+      "ci_hi_pct": 20.0,
+      "tier": "Tier 3 \u2014 negligible (within noise)"
+    },
+    {
+      "arm": "n30_A6_no_semantic",
+      "component": "semantic_layer",
+      "is_baseline": false,
+      "n_paired": 30,
+      "rescued": 2,
+      "broken": 0,
+      "rescued_ids": [
+        "sf_bq010",
+        "sf_bq275"
+      ],
+      "broken_ids": [],
+      "net": 2,
+      "net_frac": 0.06666666666666667,
+      "net_frac_pct": 6.7,
+      "ci_lo_pct": 0.0,
+      "ci_hi_pct": 16.7,
+      "tier": "Tier 3 \u2014 negligible (within noise)"
+    },
+    {
+      "arm": "n30_A8_no_verifier",
+      "component": "verifier",
+      "is_baseline": false,
+      "n_paired": 30,
+      "rescued": 3,
+      "broken": 1,
+      "rescued_ids": [
+        "sf_bq010",
+        "sf_bq027",
+        "sf_bq275"
+      ],
+      "broken_ids": [
+        "sf_bq214"
+      ],
+      "net": 2,
+      "net_frac": 0.06666666666666667,
+      "net_frac_pct": 6.7,
+      "ci_lo_pct": -6.7,
+      "ci_hi_pct": 20.0,
+      "tier": "Tier 3 \u2014 negligible (within noise)"
+    }
+  ]
+}

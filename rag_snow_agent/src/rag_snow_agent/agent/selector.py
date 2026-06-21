@@ -12,6 +12,7 @@ Scoring rules:
   -15   if final error type is aggregation_error
   + score_delta from metamorphic checks
   + verifier score (currently stub = 0.0)
+  + consensus_bonus * (independent_votes - 1)  [self-consistency / MBR voting]
 """
 
 from __future__ import annotations
@@ -32,6 +33,10 @@ DEFAULT_SCORING = {
     "invalid_identifier_penalty": 30,
     "aggregation_error_penalty": 15,
     "verifier_weight": 20.0,
+    # Self-consistency (MBR) voting: candidates whose executed results agree with
+    # other *independently-derived* candidates are more likely correct. Bonus is
+    # applied per extra independent agreeing candidate (votes - 1). Gold-free.
+    "consensus_bonus": 18.0,
 }
 
 
@@ -139,5 +144,13 @@ def _build_breakdown(
     verifier = candidate_result.get("verifier_score", 0.0)
     if verifier != 0.0:
         bd["verifier_score"] = verifier * s["verifier_weight"]
+
+    # Self-consistency / MBR voting. ``consensus_votes`` is the number of
+    # independently-derived candidates (distinct strategies) whose executed
+    # result matched this candidate's result. A singleton (votes<=1) gets no
+    # bonus; agreement across k independent derivations adds (k-1)*bonus.
+    votes = candidate_result.get("consensus_votes", 0) or 0
+    if votes > 1:
+        bd["consensus"] = (votes - 1) * s["consensus_bonus"]
 
     return bd

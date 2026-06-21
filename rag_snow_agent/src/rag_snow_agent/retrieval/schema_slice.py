@@ -28,6 +28,8 @@ class ColumnSlice:
     is_variant: bool = False
     variant_kind: str | None = None  # "ARRAY" | "OBJECT" | None — structure of the VARIANT
     variant_fields: list[str] | None = None  # known nested field paths (e.g. ["page.pagePath", "productRevenue"])
+    # descriptions for the most query-relevant nested fields: {field_name: description}
+    variant_field_descriptions: dict[str, str] | None = None
     date_format: str | None = None  # explicit format hint (e.g. "YYYYMMDD string", "YYYYMMDD integer")
 
 
@@ -84,6 +86,11 @@ class SchemaSlice:
                     if col.variant_fields:
                         fields_str = ", ".join(col.variant_fields[:8])
                         annotation += f" [fields: {fields_str}]"
+                    # Inline descriptions for the most query-relevant nested fields
+                    # so the model knows what each sub-field means (and its access path).
+                    if col.variant_field_descriptions:
+                        for fname, fdesc in col.variant_field_descriptions.items():
+                            annotation += f"\n      · {fname}: {fdesc}"
                 if col.is_time_column and col.date_format:
                     fmt = col.date_format
                     if "integer" in fmt.lower():

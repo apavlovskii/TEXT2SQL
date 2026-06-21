@@ -91,6 +91,8 @@ def run_pipeline(
     decompose: bool = False,
     decomposition_model: str | None = None,
     sample_context: str | None = None,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
 ) -> PipelineResult:
     """Execute the full plan → SQL pipeline.
 
@@ -120,6 +122,8 @@ def run_pipeline(
         semantic_context=semantic_context,
         decomposition_context=decomposition_context,
         sample_context=sample_context,
+        exploration_context=exploration_context,
+        plan_context=plan_context,
     )
     plan_raw = call_llm(plan_messages, model=model, temperature=temperature, max_tokens=max_tokens)
     result.plan_json_raw = plan_raw

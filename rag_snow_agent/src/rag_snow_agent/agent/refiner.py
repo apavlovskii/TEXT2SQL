@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..chroma.chroma_store import ChromaStore
-from ..prompting.sql_compiler import rewrite_date_sharded_tables
+from ..prompting.sql_compiler import rewrite_date_encoding, rewrite_date_sharded_tables
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import ExecutionResult, SnowflakeExecutor
 from ..snowflake.probes import probe_column_exists
@@ -19,6 +20,7 @@ from .error_classifier import (
     NOT_AUTHORIZED,
     OBJECT_NOT_FOUND,
     RESULT_MISMATCH,
+    SELF_CRITIQUE,
     classify_snowflake_error,
     extract_offending_identifier,
     extract_offending_object,
@@ -159,6 +161,30 @@ def _build_result_mismatch_repair_prompt(
     return _build_repair_prompt(instruction, previous_sql, error_message, schema_text, extra)
 
 
+def _build_recursive_cte_repair_prompt(
+    instruction: str,
+    previous_sql: str,
+    error_message: str,
+    schema_text: str,
+) -> list[dict[str, str]]:
+    extra = (
+        "The recursive CTE is invalid in Snowflake. Rewrite it to this exact shape:\n"
+        "WITH RECURSIVE name (col1, col2, ...) AS (\n"
+        "  -- ANCHOR: a non-recursive SELECT that does NOT reference `name`\n"
+        "  SELECT ...\n"
+        "  UNION ALL\n"
+        "  -- RECURSIVE: SELECT ... FROM name JOIN <table> ON ...\n"
+        "  SELECT ...\n"
+        ")\n"
+        "Rules: (1) `WITH RECURSIVE` is required. (2) The anchor must NOT reference the CTE "
+        "name and must define the column list. (3) Anchor and recursive arms must have the "
+        "SAME number and types of columns. (4) Pick the correct anchor set (e.g. true root "
+        "rows — those not appearing as a child). (5) Reference the CTE name unqualified in the "
+        "recursive arm. Return one corrected SQL only."
+    )
+    return _build_repair_prompt(instruction, previous_sql, error_message, schema_text, extra)
+
+
 def _build_empty_result_repair_prompt(
     instruction: str,
     previous_sql: str,
@@ -277,21 +303,30 @@ def refine_sql(
     instance_id: str | None = None,
     max_same_error_type: int = 3,
     sample_context: str | None = None,
+    enable_self_critic: bool = False,
+    self_critic_max: int = 1,
+    date_encodings: dict | None = None,
 ) -> tuple[str, list[RepairTraceItem], ExecutionResult | None]:
     """Run EXPLAIN → execute → repair loop.
 
     Returns (final_sql, repair_trace, last_execution_result).
     """
     trace: list[RepairTraceItem] = []
-    current_sql = sql
     last_error: str | None = None
     last_result: ExecutionResult | None = None
 
     def _maybe_rewrite_shards(s: str) -> str:
-        """Apply date-shard rewrite to LLM-generated SQL (idempotent: skip if already rewritten)."""
-        if "_date_shard_union" in s:
-            return s
-        return rewrite_date_sharded_tables(s, schema_slice)
+        """Deterministic rewrites on generated SQL: date-shard unions + epoch date
+        encoding (so a wrong YYYYMMDD comparison on an epoch column is always fixed,
+        regardless of what the LLM emitted). Shard rewrite is idempotent."""
+        if "_date_shard_union" not in s:
+            s = rewrite_date_sharded_tables(s, schema_slice)
+        if date_encodings:
+            s = rewrite_date_encoding(s, date_encodings)
+        return s
+
+    # Apply the deterministic rewrites to the initial SQL too (not just repairs).
+    current_sql = _maybe_rewrite_shards(sql)
 
     schema_text = schema_slice.format_for_prompt()
     if sample_context:
@@ -447,7 +482,49 @@ def refine_sql(
                     current_sql = repaired
                     continue
             else:
-                # No gold data, return as before
+                # ── No-gold path ─────────────────────────────────────
+                # Gold-free correctness signal: an LLM self-critique inspects
+                # the executed result and may flag a likely-wrong answer. This
+                # is the production-realistic substitute for the gold-driven
+                # RESULT_MISMATCH repair above — it lets the loop keep fixing
+                # toward correctness instead of accepting the first SQL that
+                # merely executes. It never marks the result as failed; if the
+                # critique budget is spent the current (successful) SQL is kept.
+                if enable_self_critic and self_critic_max > 0:
+                    critique = _self_critique(
+                        instruction, current_sql, exec_result,
+                        schema_text, model, max_tokens,
+                    )
+                    if critique.get("problem"):
+                        error_type = SELF_CRITIQUE
+                        reason = critique.get("reason", "")
+                        error_msg = f"Self-critique flagged the result as likely wrong: {reason}"
+                        error_type_counts[error_type] = error_type_counts.get(error_type, 0) + 1
+                        # Bound critique-driven repairs and respect global budget;
+                        # on exhaustion accept the current successful execution.
+                        if (error_type_counts[error_type] > self_critic_max
+                                or attempt >= max_repairs):
+                            log.info(
+                                "Self-critique flagged but budget reached; keeping current SQL"
+                            )
+                            return current_sql, trace, exec_result
+                        log.info("Self-critique (attempt %d): %s", attempt + 1, reason[:120])
+                        repaired = _maybe_rewrite_shards(_attempt_repair(
+                            instruction, current_sql, error_msg, error_type,
+                            schema_text, schema_slice, model, temperature, max_tokens,
+                            chroma_store=chroma_store,
+                        ))
+                        trace.append(RepairTraceItem(
+                            attempt=attempt + 1,
+                            input_sql=current_sql,
+                            error_type=error_type,
+                            error_message=error_msg[:500],
+                            repair_action=_action_for_type(error_type),
+                            output_sql=repaired,
+                        ))
+                        current_sql = repaired
+                        continue
+                # No gold data, no critique problem → accept.
                 log.info("Execution succeeded (attempt %d)", attempt + 1)
                 return current_sql, trace, exec_result
 
@@ -501,8 +578,93 @@ def _action_for_type(error_type: str) -> str:
         NOT_AUTHORIZED: "fix_object_reference",
         AGGREGATION_ERROR: "rewrite_aggregation",
         RESULT_MISMATCH: "fix_wrong_results",
+        SELF_CRITIQUE: "fix_wrong_results",
         EMPTY_RESULT: "fix_empty_results",
     }.get(error_type, "general_repair")
+
+
+def _format_result_preview(exec_result, max_rows: int = 8, max_cell: int = 60) -> str:
+    """Compact textual preview of an execution result for self-critique."""
+    cols = exec_result.column_names or []
+    rows = exec_result.rows_sample or []
+    lines = [f"row_count={exec_result.row_count}, columns={cols}"]
+    for row in rows[:max_rows]:
+        if isinstance(row, dict):
+            vals = [row.get(c) for c in cols] if cols else list(row.values())
+        else:
+            vals = list(row)
+        cells = []
+        for v in vals:
+            s = "NULL" if v is None else str(v)
+            cells.append(s[:max_cell])
+        lines.append(" | ".join(cells))
+    if len(rows) > max_rows:
+        lines.append(f"... ({len(rows) - max_rows} more sampled rows)")
+    return "\n".join(lines)
+
+
+def _self_critique(
+    instruction: str,
+    sql: str,
+    exec_result,
+    schema_text: str,
+    model: str,
+    max_tokens: int,
+) -> dict:
+    """Gold-free correctness check: ask an LLM whether the executed result
+    plausibly answers the question. Conservative by design — it should only flag
+    a problem when there is a *clear* mismatch (wrong aggregation/grain, missing
+    or wrong filter, wrong/extra columns, suspicious empty/degenerate result),
+    not on stylistic doubts. Returns {"problem": bool, "reason": str}; any
+    parsing/LLM failure returns {"problem": False} so the loop fails safe.
+    """
+    preview = _format_result_preview(exec_result)
+    system = (
+        "You are a meticulous SQL reviewer. You are given a natural-language "
+        "question, the SQL that was run, and a preview of its actual result. "
+        "Decide whether the result PLAUSIBLY answers the question. Be "
+        "conservative: only report a problem when you are confident there is a "
+        "concrete error — wrong aggregation or time grain, a missing/incorrect "
+        "filter or join, wrong or extra/missing columns, or a degenerate result "
+        "(e.g. empty, all-NULL, single row when many are expected). Do NOT flag "
+        "mere style. Respond with STRICT JSON only: "
+        '{"problem": true|false, "reason": "<short concrete reason or empty>"}.'
+    )
+    user = (
+        f"Question:\n{instruction}\n\n"
+        f"Schema (subset):\n{schema_text[:2500]}\n\n"
+        f"SQL:\n{sql}\n\n"
+        f"Result preview:\n{preview}\n\n"
+        "Does this result plausibly and correctly answer the question? "
+        "Return strict JSON."
+    )
+    try:
+        raw = call_llm(
+            [{"role": "system", "content": system},
+             {"role": "user", "content": user}],
+            model=model, temperature=0.0, max_tokens=max_tokens,
+        )
+    except Exception:
+        log.debug("Self-critique LLM call failed; treating as no problem", exc_info=True)
+        return {"problem": False}
+
+    text = (raw or "").strip()
+    # Strip code fences / locate the JSON object.
+    if "```" in text:
+        text = text.split("```")[1] if len(text.split("```")) > 1 else text
+        text = text.removeprefix("json").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+    try:
+        data = json.loads(text)
+        return {
+            "problem": bool(data.get("problem", False)),
+            "reason": str(data.get("reason", "") or ""),
+        }
+    except (ValueError, TypeError):
+        log.debug("Self-critique returned unparseable output: %r", raw)
+        return {"problem": False}
 
 
 def _get_syntax_guidance(error_msg: str, sql: str, chroma_store: ChromaStore | None) -> str:
@@ -540,11 +702,17 @@ def _attempt_repair(
     chroma_store: ChromaStore | None = None,
 ) -> str:
     """Dispatch to error-specific repair strategy and return fixed SQL."""
-    if error_type == EMPTY_RESULT:
+    if "recursive" in (error_msg or "").lower():
+        # Recursive-CTE syntax errors are common and dialect-specific; route to a
+        # targeted recipe regardless of the classifier's error_type.
+        messages = _build_recursive_cte_repair_prompt(
+            instruction, current_sql, error_msg, schema_text
+        )
+    elif error_type == EMPTY_RESULT:
         messages = _build_empty_result_repair_prompt(
             instruction, current_sql, error_msg, schema_text
         )
-    elif error_type == RESULT_MISMATCH:
+    elif error_type in (RESULT_MISMATCH, SELF_CRITIQUE):
         messages = _build_result_mismatch_repair_prompt(
             instruction, current_sql, error_msg, schema_text
         )

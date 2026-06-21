@@ -12,6 +12,7 @@ from ..retrieval.hybrid_retriever import HybridRetriever
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import SnowflakeExecutor
 from .best_of_n import run_best_of_n
+from .llm_client import LLMQuotaExhausted
 from .memory import make_trace_record
 from .plan_sql_pipeline import PipelineResult, run_pipeline
 from .refiner import RepairTraceItem, refine_sql
@@ -95,6 +96,12 @@ def solve_instance(
     semantic_context: str | None = None,
     decompose: bool = False,
     sample_context: str | None = None,
+    enable_self_critic: bool = False,
+    self_critic_max: int = 1,
+    enable_consensus: bool = True,
+    enable_exploration: bool = False,
+    enable_planning: bool = False,
+    exploration_max_probes: int = 6,
 ) -> InstanceResult:
     """Solve one instance.
 
@@ -107,6 +114,44 @@ def solve_instance(
         from ..eval.gold_verifier import load_eval_standards
         gold_path = Path(gold_dir)
         _eval_standards = load_eval_standards(gold_path / "spider2snow_eval.jsonl")
+
+    # ── Pre-generation front-end: explore values → structured plan (gold-free) ──
+    exploration_context: str | None = None
+    plan_context: str | None = None
+    date_encodings: dict = {}
+    if enable_exploration:
+        from .exploration import build_information_plan, explore
+        try:
+            er = explore(
+                question=instruction, db_id=db_id, schema_slice=schema_slice,
+                executor=executor, model=model, max_probes=exploration_max_probes,
+            )
+            exploration_context = er.evidence_text or None
+            date_encodings = er.date_encodings or {}
+            try:
+                from ..observability.instance_telemetry import telemetry
+                telemetry.mark("exploration_used")
+                telemetry.set("exploration_probes", er.n_probes)
+                telemetry.set("exploration_probes_ok", er.n_ok)
+            except Exception:
+                pass
+            if enable_planning:
+                plan_context = build_information_plan(
+                    question=instruction, schema_slice=schema_slice,
+                    exploration_evidence=exploration_context or "",
+                    evidence=semantic_context, model=model,
+                ) or None
+                if plan_context:
+                    try:
+                        from ..observability.instance_telemetry import telemetry
+                        telemetry.mark("planning_used")
+                    except Exception:
+                        pass
+        except LLMQuotaExhausted:
+            raise  # propagate so the runner checkpoints + pauses for clean resume
+        except Exception:
+            log.warning("Exploration/planning phase failed; continuing without", exc_info=True)
+
     if best_of_n > 1:
         result = _solve_best_of_n(
             instance_id=instance_id,
@@ -133,6 +178,12 @@ def solve_instance(
             semantic_context=semantic_context,
             decompose=decompose,
             sample_context=sample_context,
+            enable_self_critic=enable_self_critic,
+            self_critic_max=self_critic_max,
+            enable_consensus=enable_consensus,
+            exploration_context=exploration_context,
+            plan_context=plan_context,
+            date_encodings=date_encodings,
         )
         if memory_enabled and result.success:
             _persist_trace(
@@ -164,6 +215,11 @@ def solve_instance(
         semantic_context=semantic_context,
         decompose=decompose,
         sample_context=sample_context,
+        enable_self_critic=enable_self_critic,
+        self_critic_max=self_critic_max,
+        exploration_context=exploration_context,
+        plan_context=plan_context,
+        date_encodings=date_encodings,
     )
     if memory_enabled and result.success:
         _persist_trace(
@@ -199,6 +255,11 @@ def _solve_single(
     semantic_context: str | None = None,
     decompose: bool = False,
     sample_context: str | None = None,
+    enable_self_critic: bool = False,
+    self_critic_max: int = 1,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
+    date_encodings: dict | None = None,
 ) -> InstanceResult:
     """Single-candidate flow (Milestone 4)."""
     result = InstanceResult(
@@ -221,6 +282,8 @@ def _solve_single(
         semantic_context=semantic_context,
         decompose=decompose,
         sample_context=sample_context,
+        exploration_context=exploration_context,
+        plan_context=plan_context,
     )
     result.pipeline_result = pipeline_result
     result.llm_calls += pipeline_result.llm_calls
@@ -249,6 +312,9 @@ def _solve_single(
         instance_id=instance_id,
         max_same_error_type=max_same_error_type,
         sample_context=sample_context,
+        enable_self_critic=enable_self_critic,
+        self_critic_max=self_critic_max,
+        date_encodings=date_encodings,
     )
 
     result.final_sql = final_sql
@@ -294,6 +360,12 @@ def _solve_best_of_n(
     semantic_context: str | None = None,
     decompose: bool = False,
     sample_context: str | None = None,
+    enable_self_critic: bool = False,
+    self_critic_max: int = 1,
+    enable_consensus: bool = True,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
+    date_encodings: dict | None = None,
 ) -> InstanceResult:
     """Best-of-N flow (Milestone 5)."""
     bon_result = run_best_of_n(
@@ -321,6 +393,12 @@ def _solve_best_of_n(
         semantic_context=semantic_context,
         decompose=decompose,
         sample_context=sample_context,
+        enable_self_critic=enable_self_critic,
+        self_critic_max=self_critic_max,
+        enable_consensus=enable_consensus,
+        exploration_context=exploration_context,
+        plan_context=plan_context,
+        date_encodings=date_encodings,
     )
 
     # Summarize candidates (without heavy data like rows_sample)
@@ -336,6 +414,8 @@ def _solve_best_of_n(
             "row_count": c["row_count"],
             "score": c["score"],
             "error_type": c["error_type"],
+            "consensus_votes": c.get("consensus_votes", 0),
+            "final_sql": c.get("final_sql", ""),
         })
 
     return InstanceResult(

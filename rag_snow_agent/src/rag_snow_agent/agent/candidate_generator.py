@@ -92,6 +92,8 @@ def generate_candidate_sqls(
     semantic_context: str | None = None,
     decompose: bool = False,
     sample_context: str | None = None,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
 ) -> list[CandidateItem]:
     """Produce *n* candidate SQLs using diverse prompt strategies.
 
@@ -129,6 +131,8 @@ def generate_candidate_sqls(
             semantic_context=semantic_context,
             decomposition_context=decomp_ctx,
             sample_context=sample_context,
+            exploration_context=exploration_context,
+            plan_context=plan_context,
         )
         # Slightly vary temperature for non-default strategies to encourage diversity
         temp = temperature if i == 0 else min(temperature + 0.1, 0.8)

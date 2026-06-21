@@ -140,6 +140,16 @@ def apply_cli_toggles(config: dict, args: argparse.Namespace) -> dict:
     if args.disable_semantic:
         features["semantic"] = False
         config.setdefault("semantic_layer", {})["enabled"] = False
+    if getattr(args, "enable_self_critic", False):
+        features["self_critic"] = True
+        config.setdefault("agent", {})["self_critic_max"] = args.self_critic_max
+    if getattr(args, "disable_consensus", False):
+        features["consensus"] = False
+    if getattr(args, "enable_exploration", False):
+        features["exploration"] = True
+        config.setdefault("exploration", {})["max_probes"] = args.exploration_max_probes
+    if getattr(args, "enable_planning", False):
+        features["planning"] = True
 
     # CLI overrides for model / best_of_n / max_repairs
     if args.model:
@@ -167,6 +177,11 @@ def write_manifest(
         "disable_join_graph": args.disable_join_graph,
         "disable_sample_records": args.disable_sample_records,
         "disable_semantic": getattr(args, "disable_semantic", False),
+        "enable_self_critic": getattr(args, "enable_self_critic", False),
+        "disable_consensus": getattr(args, "disable_consensus", False),
+        "eval_gold_dir": getattr(args, "eval_gold_dir", None),
+        "enable_exploration": getattr(args, "enable_exploration", False),
+        "enable_planning": getattr(args, "enable_planning", False),
     }
     manifest = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -485,6 +500,18 @@ def run_experiment(args: argparse.Namespace) -> Path:
 
     quota_stopped = False
     stopped_at: str | None = None
+
+    # Post-hoc gold evaluation (decoupled from the in-loop repair driver).
+    # When --eval_gold_dir is set, the agent solves WITHOUT seeing gold, and we
+    # score the final SQL against gold here purely for measurement. This is how
+    # we measure no-gold (production-realistic) accuracy.
+    eval_gold_standards: dict | None = None
+    if getattr(args, "eval_gold_dir", None):
+        from ..eval.gold_verifier import load_eval_standards
+        eval_gold_standards = load_eval_standards(
+            Path(args.eval_gold_dir) / "spider2snow_eval.jsonl"
+        )
+
     with open(results_path, file_mode) as results_file:
         for i, instance in enumerate(instances, 1):
             instance_id = instance.get("instance_id", f"unknown_{i}")
@@ -557,6 +584,13 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 verify_cfg = agent_cfg.get("verification", {})
                 fingerprinting_enabled = verify_cfg.get("enable_fingerprinting", True)
                 metamorphic_enabled = verify_cfg.get("enable_metamorphic", True)
+                feat_cfg = config.get("features", {})
+                self_critic_enabled = feat_cfg.get("self_critic", False)
+                self_critic_max = agent_cfg.get("self_critic_max", 1)
+                consensus_enabled = feat_cfg.get("consensus", True)
+                exploration_enabled = feat_cfg.get("exploration", False)
+                planning_enabled = feat_cfg.get("planning", False)
+                exploration_max_probes = config.get("exploration", {}).get("max_probes", 6)
                 model = llm_cfg.get("model", "gpt-4o-mini")
                 geo_model = llm_cfg.get("geo_model")
                 if geo_model and _is_geo_query(external_knowledge, instruction):
@@ -649,6 +683,12 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     semantic_context=semantic_context,
                     decompose=decompose,
                     sample_context=sample_context,
+                    enable_self_critic=self_critic_enabled,
+                    self_critic_max=self_critic_max,
+                    enable_consensus=consensus_enabled,
+                    enable_exploration=exploration_enabled,
+                    enable_planning=planning_enabled,
+                    exploration_max_probes=exploration_max_probes,
                 )
 
                 # Write Spider2 result.json
@@ -660,12 +700,49 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     success=result.success,
                 )
 
-                executor.close()
-
-                # Determine gold_matched field
+                # Determine gold_matched field.
                 gold_matched = None
+                candidate_records = list(result.candidate_summaries or [])
+                candidate_gold_any = None
                 if args.gold_dir:
-                    gold_matched = result.success  # success implies gold match when gold_dir is set
+                    # In-loop gold: success already implies a gold match.
+                    gold_matched = result.success
+                elif eval_gold_standards is not None:
+                    # Post-hoc, no-gold-in-loop scoring for measurement only.
+                    from ..eval.gold_verifier import verify_against_gold
+
+                    def _gold_check(sql: str):
+                        if not sql:
+                            return None
+                        try:
+                            gm = verify_against_gold(
+                                instance_id, sql, db_id, executor,
+                                args.eval_gold_dir, eval_gold_standards,
+                            )
+                            return bool(gm.matched)
+                        except Exception as exc:
+                            log.warning("Post-hoc gold eval failed for %s: %s", instance_id, exc)
+                            return None
+
+                    # Score the selected SQL.
+                    gold_matched = _gold_check(result.final_sql)
+
+                    # Score every candidate so we can tell selection-miss (a correct
+                    # candidate existed but wasn't picked) from generation-ceiling
+                    # (no candidate was correct). Cache by SQL to avoid re-running.
+                    sql_cache: dict[str, bool | None] = {}
+                    if result.final_sql:
+                        sql_cache[result.final_sql] = gold_matched
+                    for c in candidate_records:
+                        csql = c.get("final_sql", "")
+                        if csql not in sql_cache:
+                            sql_cache[csql] = _gold_check(csql)
+                        c["gold_matched"] = sql_cache[csql]
+                    if candidate_records:
+                        flags = [c.get("gold_matched") for c in candidate_records]
+                        candidate_gold_any = any(bool(f) for f in flags)
+
+                executor.close()
 
                 record = {
                     "instance_id": instance_id,
@@ -680,6 +757,8 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     "error_type": None,
                     "selection_reason": result.selection_reason,
                     "gold_matched": gold_matched,
+                    "candidate_gold_any": candidate_gold_any,
+                    "candidates": candidate_records,
                 }
                 if result.success:
                     successes += 1
@@ -831,7 +910,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable_sample_records", action="store_true")
     parser.add_argument("--disable_semantic", action="store_true", help="Disable semantic_layer retrieval + external_knowledge injection")
     parser.add_argument("--skip_preflight", action="store_true", help="Skip Snowflake/OpenAI connectivity checks")
-    parser.add_argument("--gold_dir", default=None, help="Path to gold evaluation directory (enables gold-match verification)")
+    parser.add_argument("--gold_dir", default=None, help="Path to gold evaluation directory (enables IN-LOOP gold-match verification — the agent sees gold during repair)")
+    parser.add_argument("--eval_gold_dir", default=None, help="Path to gold dir used ONLY for post-hoc scoring (agent does NOT see gold); measures no-gold/production accuracy")
+    parser.add_argument("--enable_self_critic", action="store_true", help="Gold-free: LLM self-critique can trigger repair when no in-loop gold is available")
+    parser.add_argument("--self_critic_max", type=int, default=1, help="Max self-critique-driven repairs per candidate (default 1)")
+    parser.add_argument("--disable_consensus", action="store_true", help="Disable self-consistency (result-agreement) voting in Best-of-N selection")
+    parser.add_argument("--enable_exploration", action="store_true", help="Gold-free pre-generation: run read-only probes to resolve entities to real values")
+    parser.add_argument("--enable_planning", action="store_true", help="Gold-free pre-generation: build a structured Information Aggregation plan (requires --enable_exploration)")
+    parser.add_argument("--exploration_max_probes", type=int, default=6, help="Max read-only exploration probes per instance (default 6)")
     parser.add_argument("--max_same_error_type", type=int, default=3, help="Stop retrying after N same-type errors per candidate (default 3)")
     return parser
 

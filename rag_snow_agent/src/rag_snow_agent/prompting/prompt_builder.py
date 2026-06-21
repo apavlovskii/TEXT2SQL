@@ -225,6 +225,8 @@ def build_plan_prompt(
     semantic_context: str | None = None,
     decomposition_context: str | None = None,
     sample_context: str | None = None,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Return messages list for the plan-generation LLM call."""
     schema_text = schema_slice.format_for_prompt()
@@ -233,23 +235,19 @@ def build_plan_prompt(
     user_content = _PLAN_USER.format(
         schema_text=schema_text, instruction=instruction
     )
-    if sample_context:
-        user_content = sample_context + "\n\n" + user_content
-    if semantic_context:
-        user_content = semantic_context + "\n\n" + user_content
-    if decomposition_context:
-        user_content = decomposition_context + "\n\n" + user_content
-    if memory_context:
-        user_content = memory_context + "\n\n" + user_content
+    user_content = _prepend_contexts(
+        user_content,
+        sample_context=sample_context, semantic_context=semantic_context,
+        decomposition_context=decomposition_context, memory_context=memory_context,
+        exploration_context=exploration_context, plan_context=plan_context,
+    )
+    system_content = (
+        _PLAN_SYSTEM.format(snowflake_guidance=_SNOWFLAKE_GUIDANCE)
+        + get_dialect_discipline() + get_determinism_tips()
+    )
     return [
-        {
-            "role": "system",
-            "content": _PLAN_SYSTEM.format(snowflake_guidance=_SNOWFLAKE_GUIDANCE),
-        },
-        {
-            "role": "user",
-            "content": user_content,
-        },
+        {"role": "system", "content": system_content},
+        {"role": "user", "content": user_content},
     ]
 
 
@@ -347,6 +345,76 @@ _STRATEGY_HINTS: dict[str, str] = {
 }
 
 
+def get_dialect_discipline(api: str = "snowflake") -> str:
+    """Dialect-discipline guidance (ReFoRCE/DSR-derived). Snowflake-focused.
+
+    Appended to the generation system prompt to prevent the most common
+    silent-failure modes: wrong/empty string matches, mishandled nested arrays,
+    date-shard unions, and hallucinated values.
+    """
+    if api != "snowflake":
+        return ""
+    return (
+        "\n\nDialect discipline (Snowflake):\n"
+        "- String matching: if you are not certain of a literal's exact spelling/case, "
+        "do NOT match it directly. Use fuzzy match `WHERE col ILIKE '%a%b%'` (replace "
+        "spaces with %). Prefer values you have actually observed (from exploration "
+        "evidence) over guessed strings.\n"
+        "- Nested data: VARIANT/ARRAY columns require `LATERAL FLATTEN(input => t.\"col\") f` "
+        "then `f.value:\"field\"::TYPE`. If a nested structure is unknown, inspect "
+        "`f.value` first. Enclose identifiers in double quotes.\n"
+        "- Date-sharded tables: UNION ALL the matching day-tables first, then filter "
+        "(`SELECT ... FROM (T1 UNION ALL T2) WHERE ...`); list tables explicitly, do not omit any.\n"
+        "- Date/time encoding varies — do NOT assume YYYYMMDD. A date column may be a "
+        "DATE/TIMESTAMP, an integer YYYYMMDD, or an epoch in seconds/millis/micros. Use the "
+        "format observed during exploration: epoch micros -> `TO_TIMESTAMP(col/1000000)`; "
+        "DATE -> compare to `DATE 'YYYY-MM-DD'`; integer YYYYMMDD -> compare as integers.\n"
+        "- Recursive CTE: `WITH RECURSIVE name (c1, c2) AS (anchor SELECT ... UNION ALL "
+        "recursive SELECT ... JOIN name ...)`; anchor and recursive arms must have matching "
+        "column counts; pick the correct anchor set (e.g. true roots).\n"
+        "- NULL handling: use NVL/COALESCE for nullable columns; `=` never matches NULL.\n"
+        "- Include EVERY filter the question names (don't silently drop a constraint).\n"
+        "- Ground answers in database values, not your own world knowledge."
+    )
+
+
+def get_determinism_tips() -> str:
+    """Output-determinism guidance (#8) to reduce exact-match mismatches."""
+    return (
+        "\n\nOutput determinism:\n"
+        "- `ORDER BY <key> DESC NULLS LAST`; add a secondary sort key to break ties deterministically.\n"
+        "- If the question does not specify precision, keep numeric values to 4 decimal places.\n"
+        "- When asked for an entity without specifying name vs id, return both."
+    )
+
+
+def _prepend_contexts(
+    user_content: str,
+    *,
+    sample_context: str | None,
+    semantic_context: str | None,
+    decomposition_context: str | None,
+    memory_context: str | None,
+    exploration_context: str | None,
+    plan_context: str | None,
+) -> str:
+    """Prepend optional context blocks (most prominent last)."""
+    if sample_context:
+        user_content = sample_context + "\n\n" + user_content
+    if semantic_context:
+        user_content = semantic_context + "\n\n" + user_content
+    if decomposition_context:
+        user_content = decomposition_context + "\n\n" + user_content
+    if memory_context:
+        user_content = memory_context + "\n\n" + user_content
+    # Exploration evidence + structured plan are the most relevant — put them on top.
+    if exploration_context:
+        user_content = exploration_context + "\n\n" + user_content
+    if plan_context:
+        user_content = plan_context + "\n\n" + user_content
+    return user_content
+
+
 def build_plan_prompt_with_strategy(
     instruction: str,
     schema_slice: SchemaSlice,
@@ -356,6 +424,8 @@ def build_plan_prompt_with_strategy(
     semantic_context: str | None = None,
     decomposition_context: str | None = None,
     sample_context: str | None = None,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Return plan-generation messages with an optional strategy hint."""
     hint = _STRATEGY_HINTS.get(strategy, "")
@@ -365,17 +435,16 @@ def build_plan_prompt_with_strategy(
     system_content = _PLAN_SYSTEM.format(snowflake_guidance=_SNOWFLAKE_GUIDANCE)
     if hint:
         system_content += hint
+    system_content += get_dialect_discipline() + get_determinism_tips()
     user_content = _PLAN_USER.format(
         schema_text=schema_text, instruction=instruction
     )
-    if sample_context:
-        user_content = sample_context + "\n\n" + user_content
-    if semantic_context:
-        user_content = semantic_context + "\n\n" + user_content
-    if decomposition_context:
-        user_content = decomposition_context + "\n\n" + user_content
-    if memory_context:
-        user_content = memory_context + "\n\n" + user_content
+    user_content = _prepend_contexts(
+        user_content,
+        sample_context=sample_context, semantic_context=semantic_context,
+        decomposition_context=decomposition_context, memory_context=memory_context,
+        exploration_context=exploration_context, plan_context=plan_context,
+    )
     return [
         {"role": "system", "content": system_content},
         {

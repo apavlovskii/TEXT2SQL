@@ -37,18 +37,31 @@ def _load_config() -> dict:
 _VARIANT_FIELD_PARENT_RE = re.compile(r'^"?([^"]+)"?:(.+)$')
 
 
+_DESC_MAX_FIELDS = 12   # max nested fields (per table) that get an inline description
+_DESC_TRUNC = 220       # truncate each description in the slice to keep the token budget
+
+
+def _lex_tokens(s: str) -> set[str]:
+    return {t for t in re.split(r"[^a-z0-9]+", (s or "").lower()) if len(t) > 2}
+
+
 def _enrich_variant_fields(
     schema_slice: SchemaSlice,
     collection,
     db_id: str,
+    query: str = "",
 ) -> None:
-    """Populate ``variant_fields`` and correct ``variant_kind`` on VARIANT columns.
+    """Populate ``variant_fields`` / ``variant_kind`` and attach descriptions for
+    the most query-relevant nested fields on each VARIANT column.
 
     Queries ChromaDB for VARIANT_FIELD entries belonging to each table in the
     slice, groups them by parent VARIANT column, and attaches the sub-field
     names.  Columns with known scalar sub-fields are reclassified as OBJECT
-    (direct colon access) rather than ARRAY (needs FLATTEN).
+    (direct colon access) rather than ARRAY (needs FLATTEN). Descriptions
+    (``comment``) for the top fields most relevant to *query* are attached so the
+    model knows what each sub-field means; selection is lexical (no embeddings).
     """
+    qtok = _lex_tokens(query)
     for ts in schema_slice.tables:
         # Fetch all VARIANT_FIELD entries for this table
         try:
@@ -73,26 +86,66 @@ def _enrich_variant_fields(
         # Group sub-field names by parent column:  "totals":pageviews → totals → [pageviews]
         # Also track whether the sub-fields come from array elements or direct objects
         fields_by_parent: dict[str, list[str]] = defaultdict(list)
+        comment_by_parent_field: dict[tuple[str, str], str] = {}
         is_array_element: dict[str, bool] = {}
         for meta in vf_results["metadatas"]:
-            col_name = meta.get("qualified_name", "").rsplit(".", 1)[-1]
+            # Derive the nested key by stripping the table prefix, NOT rsplit('.')
+            # — nested-of-nested paths (e.g. "hits":product.productRevenue) contain
+            # dots that rsplit would truncate.
+            qn = meta.get("qualified_name", "")
+            tqn = meta.get("table_qualified_name", "")
+            if tqn and qn.startswith(tqn + "."):
+                col_name = qn[len(tqn) + 1:]
+            else:
+                col_name = qn.rsplit(".", 1)[-1]
             comment = meta.get("comment", "") or ""
             m = _VARIANT_FIELD_PARENT_RE.match(col_name)
             if m:
-                parent = m.group(1)   # e.g. "totals"
-                field = m.group(2)    # e.g. "pageviews"
+                parent = m.group(1)   # e.g. "totals" or "hits"
+                field = m.group(2)    # e.g. "pageviews" or "product.productRevenue"
                 fields_by_parent[parent].append(field)
-                if "array element" in comment.lower():
+                if comment.strip():
+                    comment_by_parent_field[(parent, field)] = comment.strip()
+                cl = comment.lower()
+                if any(k in cl for k in ("array element", "flatten", "repeated array")):
                     is_array_element[parent] = True
 
         if not fields_by_parent:
             continue
 
+        # Rank described fields by lexical relevance to the query and keep the
+        # top-N (per table) to receive an inline description in the slice.
+        described = [
+            (p, f, c) for (p, f), c in comment_by_parent_field.items()
+        ]
+
+        def _score(item):
+            p, f, c = item
+            cl = c.lower()
+            # Demote fields with no real data (demo placeholders / redacted) so the
+            # limited description budget goes to fields that carry usable values.
+            if "not populated" in cl or "redacted" in cl or "no longer supported" in cl:
+                return -1
+            return len(qtok & _lex_tokens(f"{p} {f} {c}"))
+
+        described.sort(key=lambda it: (-_score(it), it[0], it[1]))
+        selected: dict[str, dict[str, str]] = defaultdict(dict)
+        for p, f, c in described[:_DESC_MAX_FIELDS]:
+            selected[p][f] = c[:_DESC_TRUNC]
+
         # Attach to matching ColumnSlice objects
         for cs in ts.columns:
             canon = (cs.original_name or cs.name).strip('"')
             if canon in fields_by_parent:
-                cs.variant_fields = sorted(fields_by_parent[canon])
+                # Order names so the most query-relevant appear first (within the
+                # [:8] cap shown in the slice), described fields ahead of the rest.
+                names = sorted(set(fields_by_parent[canon]))
+                desc_for_col = selected.get(canon, {})
+                names.sort(key=lambda f: (f not in desc_for_col,
+                                          -len(qtok & _lex_tokens(f)), f))
+                cs.variant_fields = names
+                if desc_for_col:
+                    cs.variant_field_descriptions = desc_for_col
                 if is_array_element.get(canon):
                     # Sub-fields from array elements → ARRAY that needs FLATTEN
                     cs.variant_kind = "ARRAY"
@@ -195,7 +248,7 @@ def build_schema_slice(
     schema_slice = SchemaSlice(db_id=db_id, tables=table_slices)
 
     # Enrich VARIANT columns with known sub-field paths from ChromaDB
-    _enrich_variant_fields(schema_slice, retriever.collection, db_id)
+    _enrich_variant_fields(schema_slice, retriever.collection, db_id, query=query)
 
     # Connectivity expansion
     if connectivity_rounds > 0:

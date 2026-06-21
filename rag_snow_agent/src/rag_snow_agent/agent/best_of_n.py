@@ -30,6 +30,72 @@ def _mark_verification_used() -> None:
         pass
 
 
+def _normalize_cell(v) -> object:
+    """Normalize one result cell for order-insensitive equality across candidates."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        # Round floats so trivially-different representations cluster together.
+        return round(float(v), 4)
+    s = str(v).strip()
+    try:
+        return round(float(s), 4)
+    except (ValueError, TypeError):
+        return s.lower()
+
+
+def _result_signature(cr: dict, max_rows: int = 200) -> tuple | None:
+    """Build an order-insensitive signature of a candidate's executed result.
+
+    Returns None for candidates that did not execute (cannot vote). Two
+    candidates with the same signature returned the same answer set. Note this
+    relies on ``rows_sample`` (a capped sample); for large unordered results the
+    sample may differ between equivalent queries, so voting is most reliable on
+    the small/aggregate results that dominate this benchmark.
+    """
+    if not cr.get("execution_success"):
+        return None
+    row_count = cr.get("row_count")
+    if row_count is None:
+        return None
+    cols = tuple(sorted((c or "").strip().lower() for c in (cr.get("column_names") or [])))
+    rows = cr.get("rows_sample") or []
+    norm_rows: list[tuple] = []
+    for row in rows[:max_rows]:
+        if isinstance(row, dict):
+            vals = [row.get(c) for c in (cr.get("column_names") or [])]
+        else:
+            vals = list(row)
+        norm_rows.append(tuple(_normalize_cell(v) for v in vals))
+    norm_rows.sort(key=lambda t: tuple(str(x) for x in t))
+    return (row_count, cols, tuple(norm_rows))
+
+
+def _assign_consensus_votes(candidate_results: list[dict]) -> None:
+    """Cluster candidates by result signature and tag each with its independent
+    vote count (number of distinct strategies that converged on the same result).
+
+    Mutates each candidate dict in place, setting ``consensus_votes``.
+    """
+    clusters: dict[tuple, set] = {}
+    for cr in candidate_results:
+        sig = _result_signature(cr)
+        cr["_result_sig"] = sig
+        if sig is None:
+            cr["consensus_votes"] = 0
+            continue
+        # Count distinct strategies so re-emitting the same strategy doesn't
+        # inflate the vote — agreement must come from independent derivations.
+        clusters.setdefault(sig, set()).add(cr.get("strategy"))
+    for cr in candidate_results:
+        sig = cr.get("_result_sig")
+        if sig is not None:
+            cr["consensus_votes"] = len(clusters.get(sig, ()))
+        cr.pop("_result_sig", None)
+
+
 def _candidate_to_result(
     candidate: CandidateItem,
     final_sql: str,
@@ -114,6 +180,12 @@ def run_best_of_n(
     semantic_context: str | None = None,
     decompose: bool = False,
     sample_context: str | None = None,
+    enable_self_critic: bool = False,
+    self_critic_max: int = 1,
+    enable_consensus: bool = True,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
+    date_encodings: dict | None = None,
 ) -> dict:
     """Generate N candidates, execute+repair, verify, select the best."""
     log.info(
@@ -133,6 +205,8 @@ def run_best_of_n(
         semantic_context=semantic_context,
         decompose=decompose,
         sample_context=sample_context,
+        exploration_context=exploration_context,
+        plan_context=plan_context,
     )
 
     # Infer expected shape once for the instruction
@@ -185,10 +259,17 @@ def run_best_of_n(
             instance_id=instance_id,
             max_same_error_type=max_same_error_type,
             sample_context=sample_context,
+            enable_self_critic=enable_self_critic,
+            self_critic_max=self_critic_max,
+            date_encodings=date_encodings,
         )
 
         cr = _candidate_to_result(candidate, final_sql, trace, exec_result)
         candidate_results.append(cr)
+
+    # ── Step 2b: Self-consistency voting across candidates ───────────
+    if enable_consensus:
+        _assign_consensus_votes(candidate_results)
 
     # ── Step 3: Verification pass ────────────────────────────────────
     for cr in candidate_results:
@@ -273,6 +354,10 @@ def run_best_of_n(
         shape_notes.append(f"metamorphic delta={bd['metamorphic_delta']:+.1f}")
     if shape_notes:
         reason_parts.append("shape: " + ", ".join(shape_notes))
+    if best.get("consensus_votes", 0) > 1:
+        reason_parts.append(
+            f"consensus: {best['consensus_votes']} independent candidates agreed"
+        )
 
     selection_reason = "; ".join(reason_parts)
     log.info("Selected: %s", selection_reason)

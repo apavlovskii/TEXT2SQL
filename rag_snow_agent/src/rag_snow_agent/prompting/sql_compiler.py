@@ -11,6 +11,78 @@ from .plan_schema import PlanCTE, PlanFlatten, PlanGeoJoin, QueryPlan
 
 log = logging.getLogger(__name__)
 
+# ── Date-encoding enforcement ────────────────────────────────────────────────
+# Deterministically fix the common failure where a date column is treated as
+# integer/string YYYYMMDD. Handles epoch columns (micros/millis/seconds) AND native
+# DATE/TIMESTAMP columns wrongly parsed via TO_DATE(...,'YYYYMMDD') or compared to a
+# YYYYMMDD literal. Only unambiguously-wrong patterns are rewritten, so a correct
+# query is never altered.
+
+_DIVISOR = {"micros": 1000000, "millis": 1000, "seconds": 1}
+# YYYYMMDD literal, either as bare int or quoted string: 20200101 or '20200101'
+_LIT = r"(?:'(\d{8})'|(\d{8}))"
+
+
+def _yyyymmdd_to_iso(token: str | None) -> str | None:
+    if not token or len(token) != 8 or not token.isdigit():
+        return None
+    y, m, d = int(token[:4]), int(token[4:6]), int(token[6:8])
+    if 1900 <= y <= 2100 and 1 <= m <= 12 and 1 <= d <= 31:
+        return f"{y:04d}-{m:02d}-{d:02d}"
+    return None
+
+
+def rewrite_date_encoding(sql: str, encodings: dict[str, str] | None) -> str:
+    """Rewrite date columns wrongly treated as YYYYMMDD.
+
+    *encodings*: {exact_column_name: "micros"|"millis"|"seconds"|"native"}.
+      - epoch kinds  -> wrap column as TO_TIMESTAMP(col/divisor)::DATE, literal -> DATE
+      - "native"     -> column is already a DATE; strip TO_DATE(...,'YYYYMMDD'),
+                        and convert YYYYMMDD literals (int or string) to DATE literals
+    """
+    if not sql or not encodings:
+        return sql
+    out = sql
+    for col, kind in encodings.items():
+        ref = r'((?:[A-Za-z_]\w*\.)?"' + re.escape(col) + r'")'
+        if kind == "native":
+            def colexpr(refexpr: str) -> str:
+                return refexpr          # already a date
+            cast = ""
+        elif kind in _DIVISOR:
+            div = _DIVISOR[kind]
+            def colexpr(refexpr: str, div=div) -> str:
+                inner = f"{refexpr}/{div}" if div != 1 else refexpr
+                return f"TO_TIMESTAMP({inner})"
+            cast = "::DATE"
+        else:
+            continue
+
+        # P1: TO_DATE([TO_VARCHAR(|TO_CHAR(|CAST(] ref [)], 'YYYYMMDD')
+        out = re.sub(
+            r"(?:TRY_)?TO_DATE\s*\(\s*(?:TO_VARCHAR|TO_CHAR|CAST)?\s*\(?\s*" + ref
+            + r"\s*(?:AS\s+\w+(?:\(\d+\))?)?\s*\)?\s*,\s*'YYYYMMDD'\s*\)",
+            lambda m: f"{colexpr(m.group(1))}{cast}",
+            out, flags=re.IGNORECASE,
+        )
+        # P2-BETWEEN: ref BETWEEN <lit> AND <lit>
+        def _between(m):
+            iso1 = _yyyymmdd_to_iso(m.group(2) or m.group(3))
+            iso2 = _yyyymmdd_to_iso(m.group(4) or m.group(5))
+            if not (iso1 and iso2):
+                return m.group(0)
+            return f"{colexpr(m.group(1))}{cast} BETWEEN DATE '{iso1}' AND DATE '{iso2}'"
+        out = re.sub(ref + r"\s+BETWEEN\s+" + _LIT + r"\s+AND\s+" + _LIT, _between, out, flags=re.IGNORECASE)
+        # P2-COMPARE: ref <op> <lit>
+        def _cmp(m):
+            iso = _yyyymmdd_to_iso(m.group(3) or m.group(4))
+            if not iso:
+                return m.group(0)
+            return f"{colexpr(m.group(1))}{cast} {m.group(2)} DATE '{iso}'"
+        out = re.sub(ref + r"\s*(<=|>=|<>|!=|<|>|=)\s*" + _LIT, _cmp, out, flags=re.IGNORECASE)
+    return out
+
+
 # ── Date-shard rewriting ────────────────────────────────────────────────────
 
 _DATE_SHARD_RE = re.compile(r"(\S+?)(\d{8})$")
