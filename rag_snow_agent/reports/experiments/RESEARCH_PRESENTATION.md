@@ -162,48 +162,74 @@
 
 ---
 
-## 11a. SOTA review (1/3) — the agentic baseline & ReFoRCE
+## 11a. SOTA review (1/3) — top tier: proprietary leaders & APEX-SQL
+
+**Proprietary leaders** (Genloop Sentinel **96.7%**, Paytm Prism **90.5%** — Snow)
+- **Frontier models** + **multi-agent consensus/debate**: specialized agents (schema, joins,
+  business logic) each propose, then **negotiate to one answer** rather than majority-vote —
+  resolving disagreements by reasoning. Heavy ensembling + business-context handling. Code closed.
+
+**APEX-SQL** (Snow **73%** — current academic/open SOTA). A full **hypothesis → verify → refine**
+agent that grounds every decision in real data:
+1. **Schema-agnostic logical planning** — first writes the solution *steps in natural language*
+   ("filter by X, aggregate Y") with **no column names**, generating 2 plans and merging them —
+   avoids the model latching onto superficial column-name string matches (a top failure mode).
+2. **Dual-pathway schema pruning** — a **negative** pass deletes confidently-irrelevant columns,
+   a **positive** pass preserves clearly-needed ones; a column is dropped only if rejected by
+   *both* → high recall on the right columns.
+3. **Parallel data profiling** — probes that validate each column's **role** (real filter? join
+   key? metric?) against **actual value distributions, formats, NULL ratios**, compressing large
+   results (>30 rows → top-10 + stats). Role-driven, not generic sampling.
+4. **Deterministic "tip library"** — maps the operations a query needs (RANK, GROUP BY, NULL
+   handling, string matching, joins…) to **14 categories of hard rules** via keyword lookup
+   (>95% recall) — reliable, noise-free guidance vs. fuzzy retrieval.
+- *Why it scores: resolve ambiguity by **querying the data**, enforce correctness deterministically.*
+
+---
+
+## 11b. SOTA review (2/3) — DivSkill-SQL & DSR-SQL
+
+**DivSkill-SQL** (Lite **73%**, #1 on the Lite track) — attacks the weakness of naive ensembling
+(candidates that all fail the same way):
+- **Residual Skill Optimization** — builds a library of **complementary "skills"** (prompt+strategy
+  recipes); each *new* skill is trained on the exact examples the current ensemble **still gets
+  wrong**, explicitly maximizing **Pass@K** (chance that ≥1 of K candidates is right).
+- At test time, several **skill-guided agents** solve the same query via *different* interaction
+  patterns; results are selected across them.
+- *Why it scores: diversity engineered to cover failures, not random — **3× fewer hallucinated
+  schema/function references** vs. stochastic ensembling.*
+
+**DSR-SQL** (Dual-State Reasoning — academic, mid-tier) — splits the problem into two states:
+1. **Adaptive context** — an LLM does **schema linking/compression by writing exploratory SQL**
+   and sampling the schema 3× at high temperature, then merging — keeping only the relevant
+   tables/columns (de-noises huge enterprise schemas).
+2. **Progressive generation** — a **4-state machine** (Extend = next sub-question · Revise = fix
+   last step · Explore = probe data when results look wrong · Rephrase = finalize) builds the query
+   **step-by-step, executing each intermediate result**. Plus **evidence extraction** that
+   compresses external docs to the few facts/formulas the question needs.
+- *Why it scores: hard queries are decomposed and verified incrementally, not guessed whole.*
+
+---
+
+## 11c. SOTA review (3/3) — ReFoRCE & the baseline
+
+**ReFoRCE** (Snow **31%** with o1-preview — prior academic SOTA). Four mechanisms together:
+1. **Table compression** — groups near-duplicate / date-sharded tables and prunes columns so a
+   3000-column schema fits in context without drowning the model in noise.
+2. **Column exploration** — *before* answering, writes probe SQLs (`SELECT DISTINCT …`, value
+   samples, nested-field inspection) and feeds the **real results** back, grounding generation in
+   actual values/formats rather than guesses.
+3. **Format restriction** — derives the expected answer's **column structure + types** and forces
+   the output to match it (fewer wrong-shape / wrong-column answers).
+4. **Self-refinement + self-consistency voting** — several candidates, each repaired on execution
+   feedback, then **voted** — the answer multiple independent attempts agree on wins.
+- *Why it scores: exploration removes value/format errors; voting removes one-shot variance.*
 
 **Spider-Agent** (xlang, ICLR'25 — the original baseline)
-- Agent↔environment loop (Gymnasium), **Docker-sandboxed execution**, tool use.
-- Established the *execution-feedback agent* paradigm for Spider2; modest accuracy alone.
-
-**ReFoRCE** (Snow **31%** — prior academic SOTA)
-- **Column exploration** — writes probe SQLs to learn real values & nested structure *before* answering.
-- **Format restriction** — derives the expected output schema and constrains generation to it.
-- **Self-refinement + self-consistency voting** over N≈8 candidates with execution feedback.
-- **Table compression** to fit 1000s of columns in context.
-- *Accuracy drivers: exploration + voting.* (Gold-free in its loop.)
-
----
-
-## 11b. SOTA review (2/3) — DSR-SQL & DivSkill-SQL
-
-**DSR-SQL** (Dual-State Reasoning)
-- **Adaptive context state**: LLM-driven schema compression/linking via exploratory SQL + 3-round sampling.
-- **Progressive generation state**: a **4-state machine** (Extend / Revise / Explore / Rephrase) that builds the query **sub-question by sub-question with per-step execution**.
-- **Evidence extraction**: compress external knowledge docs to the question-relevant facts/formulas.
-- *Accuracy drivers: structured decomposition + schema grounding.*
-
-**DivSkill-SQL** (Lite **73%**, #1)
-- **Residual Skill Optimization**: build *complementary* skills, each optimized on the cases the current ensemble **fails** (maximize Pass@K) — not random/stochastic diversity.
-- Test-time: multiple skill-guided agents attack the same query via different interaction patterns.
-- *Result: 3× fewer hallucinated schema refs — diversity that targets failures, not surface variation.*
-
----
-
-## 11c. SOTA review (3/3) — APEX-SQL (current SOTA) & proprietary
-
-**APEX-SQL** (Snow **73%** — current academic SOTA)
-- **Hypothesis → verify → refine** agent loop, grounded in real data at every step.
-- **Logical planning** that is *schema-agnostic* first (avoids string-similarity hallucination).
-- **Dual-pathway schema pruning** (keep a column unless confidently noise AND not task-critical).
-- **Parallel data profiling** — validate each column's **role** (filter / join / aggregate) against real values, formats, distributions.
-- **Deterministic "tip library"** (14 categories: string-matching, NULL handling, joins, pitfalls) via keyword→directive mapping.
-- *Accuracy driver: data-grounded hypothesis verification — the recipe to beat.*
-
-**Proprietary** (Genloop Sentinel **96.7%**, Paytm Prism **90.5%**)
-- Frontier models + **multi-agent consensus/debate** (specialized agents negotiate one answer) over naive voting; heavy ensembles; business-context handling. Code closed.
+- Text-to-SQL as an **agent in a sandboxed environment** (Gymnasium loop): issue actions (inspect
+  schema, run SQL, read docs), see results, iterate in **Docker**.
+- Establishes the execution-feedback paradigm but, single-agent with no ensembling, accuracy is
+  low — the floor the others build on.
 
 ---
 
@@ -223,16 +249,29 @@ Every leading system combines the same recurring ingredients:
 
 ---
 
-## 12. Where we stand vs SOTA (Spider2-Snow)
+## 12. SOTA ranked — best → lowest (Spider2-Snow)
 
-| System | Snow accuracy | Notes |
-|---|---:|---|
-| Proprietary (Genloop, Native, …) | 90–96% | frontier models + heavy ensembles |
-| **APEX-SQL** | **73%** | full hypothesis-verify agent loop (academic SOTA) |
-| **Ours (conventional / lenient)** | ~50–60% | curated subset, lenient scoring |
-| ReFoRCE | 31% | column exploration + self-consistency |
+| # | System | Snow | Open? | What gets them there |
+|--:|---|---:|:--:|---|
+| 1 | Genloop Sentinel Agent v2 Pro | **96.7%** | ✗ | frontier model + heavy multi-agent ensemble |
+| 2 | Native (usenative.ai) | 96.5% | ✗ | proprietary agent |
+| 3 | QUVI-3 + Gemini-3-pro | 94.2% | ✗ | frontier model + agent |
+| 4 | Tencent TCDataAgent | 94.0% | ✗ | contextual-scaling agent |
+| 5 | Paytm Prism | 90.5% | ~ | multi-agent **consensus/debate** |
+| 6 | **APEX-SQL** | **73%** | ✅ | **hypothesis→verify→refine + data profiling** (academic SOTA) |
+| — | **Ours** | **~50–60%¹** | ✅ | exploration + best-of-N + deterministic format fixes |
+| 7 | ReFoRCE | 31% | ✅ | column exploration + self-consistency voting |
+| 8 | Spider-Agent (baseline) | low | ✅ | single sandboxed agent, no ensembling |
 
-- We are **above older academic baselines, below APEX.** The gap is **architectural**, not tuning.
+¹ *Not directly comparable: ours is a curated conventional subset with lenient scoring; ~33% on
+the hard nested/analytics slice. The rest are full-benchmark, official scoring.*
+
+**Lite track (easier benchmark, for reference):** DivSkill-SQL **73.1%** (#1), SOMA-SQL 72.0%,
+DecisionX 71.8%, Databao 69.7%.
+
+**Reading:** the **top tier is proprietary + frontier models**; **APEX-SQL is the open SOTA** and
+the realistic target; we sit **above ReFoRCE / older baselines, below APEX**. The gap to APEX is
+**architectural** (full data-grounded verify loop), not parameter tuning.
 
 ---
 
