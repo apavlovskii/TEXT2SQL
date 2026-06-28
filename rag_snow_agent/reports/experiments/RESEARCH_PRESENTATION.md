@@ -169,21 +169,125 @@
   business logic) each propose, then **negotiate to one answer** rather than majority-vote —
   resolving disagreements by reasoning. Heavy ensembling + business-context handling. Code closed.
 
-**APEX-SQL** (Snow **73%** — current academic/open SOTA). A full **hypothesis → verify → refine**
-agent that grounds every decision in real data:
-1. **Schema-agnostic logical planning** — first writes the solution *steps in natural language*
-   ("filter by X, aggregate Y") with **no column names**, generating 2 plans and merging them —
-   avoids the model latching onto superficial column-name string matches (a top failure mode).
-2. **Dual-pathway schema pruning** — a **negative** pass deletes confidently-irrelevant columns,
-   a **positive** pass preserves clearly-needed ones; a column is dropped only if rejected by
-   *both* → high recall on the right columns.
-3. **Parallel data profiling** — probes that validate each column's **role** (real filter? join
-   key? metric?) against **actual value distributions, formats, NULL ratios**, compressing large
-   results (>30 rows → top-10 + stats). Role-driven, not generic sampling.
-4. **Deterministic "tip library"** — maps the operations a query needs (RANK, GROUP BY, NULL
-   handling, string matching, joins…) to **14 categories of hard rules** via keyword lookup
-   (>95% recall) — reliable, noise-free guidance vs. fuzzy retrieval.
+**APEX-SQL** (Snow leaderboard **73%**, paper EX **53%** with DeepSeek-R1 — current academic/open SOTA).
+*Paper: arXiv:2602.16720, KDD 2026. Code: github.com/Tencent/APEX-SQL-Project.*
+
+A full **hypothesis → verify → refine** agent that grounds every decision in real data.
+Two-stage pipeline: **Stage 1** finds the right schema; **Stage 2** generates and validates SQL.
+
+### Stage 1 — Schema Linking (4 steps)
+
+1. **Schema-agnostic logical planning** — generates 2 reasoning plans in natural language ("filter
+   by X, aggregate Y over Z") with *no column names*, at temperature 0.8, then merges them at
+   temperature 0.2. Decouples intent parsing from schema vocabulary so the model doesn't latch onto
+   superficially similar column names. *Removing this step: −5 pp SRR.*
+
+2. **Dual-pathway schema pruning** — two simultaneous LLM passes over all columns:
+   - **Negative pass**: tag columns to *delete* (clearly irrelevant)
+   - **Positive pass**: tag columns to *keep* (clearly needed)
+   - **Union logic**: a column survives unless *both* passes reject it — high precision without sacrificing recall.
+   - Compresses ~3 430 columns → ~383 columns (**9× reduction**, ~7 k tokens).
+   - *Ablation (120-case pilot, SRR):* deletion only 80.8%; selection only 93.3%; **both: 97.5%**
+
+3. **Parallel data profiling** — independent agents per table run role-specific exploratory SQL
+   against the live database to validate each column's *actual* role: filter key, join key, metric,
+   nullable flag. Results >30 rows compressed to top-10 + aggregate statistics. This is not generic
+   sampling — each probe is *role-driven*. *Removing: −9.2 pp SRR.*
+
+4. **Global synthesis** — integrates cross-table observations, enforces **topological connectivity**
+   (all join paths in the output subgraph must be traversable). Includes a semantic linking sub-step
+   that hypothesises table/column roles *before* profiling to direct the probes.
+   *Removing all agentic verification: −21.7 pp SRR (55.8% vs. 77.5%).* Baseline ReFoRCE schema
+   linking: **35% SRR** on the same protocol.
+
+### Stage 2 — SQL Generation (pre-processing + agentic loop + selection)
+
+*Two pre-processing steps run once before the agent loop:*
+
+5. **Macro plan aggregation** — multiple reasoning paths from Stage 1 are consolidated into a
+   single unified master plan injected into the agent's initial context. Prevents the agent from
+   starting blind.
+
+6. **Deterministic "tip library"** — a **rule engine** (not embedding retrieval) maps operational
+   keywords from the plan to one of **14 directive categories** (Join Strategy, NULL inspection,
+   String Matching, Aggregation, Sorting, Recursive CTE, …) stored in a hand-crafted library ℳ.
+   >95% recall in pilot. Adding tips: **+3.75–4.27% EX@8** on GPT-4o / GPT-5. Reliable and
+   noise-free vs. fuzzy retrieval. Can be disabled via `--no_tips`.
+
+*Agentic exploration loop — bounded at max 40 actions and 56 k token budget:*
+
+| Action | What happens |
+|:-------|:-------------|
+| **PROFILING** | Generates exploratory SQL — distributions, NULL checks, FK validation, value ranges. Compresses results >30 rows to top-10 + statistics. |
+| **CONSOLIDATION** | Periodic state compression: prunes history to exploratory queries + execution results + latest consolidated plan. Prevents context bloat within the 56 k budget. |
+| **SQL SYNTHESIS** | Maps accumulated evidence to physical SQL. If execution fails, re-enters the loop. SQL synthesis is *force-triggered* at 52 k tokens to ensure a candidate exists before budget exhaustion. |
+| **CONFIRMATION** | Secondary semantic check: does the SQL logic match user intent, accumulated observations, and the current plan? Finalises output only when conditions pass. |
+
+*Answer selection:*
+- **8 samples** (Pass@8), majority voting on execution results.
+- **Reward model** (`ContextualAI/ctx-bird-reward-250121`) as tie-breaker when voting fails to reach consensus.
+- `--revote` flag re-runs selection on cached samples without regenerating.
+
+**Key numbers:**
+
+| Benchmark | N | Model | EX | Pass@8 |
+|:----------|--:|:------|---:|-------:|
+| Spider 2.0-Snow | 547 | DeepSeek-R1 | **53.03%** | **68.44%** |
+| BIRD-Dev | 1 534 | GPT-4o | **70.7%** | — |
+| Spider 2.0-Snow schema linking | 120 | GPT-4.1 | **88.33% SRR** | — |
+
+**Exploration effect (oracle schema, N=120):** DeepSeek-V3.2 with exploration **57.50%** vs.
+without **39.17%** — **+18.3 pp**. "Rich get richer": stronger models benefit proportionally more.
+
+**The identified bottleneck:** Pass@8 = 68.44% vs. voted EX = 53.03% — **15 pp lost to answer
+selection**. The authors explicitly name selection as the next frontier. Directly mirrors our
+finding: Best-of-N ceiling 84%, deployable with naive selection ~50–60%.
+
 - *Why it scores: resolve ambiguity by **querying the data**, enforce correctness deterministically.*
+
+---
+
+## 11a-2. APEX-SQL — architecture diagram (reference)
+
+```
+NL question
+    │
+    ▼
+┌──────────────────────────── STAGE 1: Schema Linking ─────────────────────────────┐
+│                                                                                    │
+│  ① Hypothesis Generation ──► 2 schema-agnostic plans (T=0.8) ──► merge (T=0.2) │
+│                                                                                    │
+│  ② Dual-Pathway Pruning                                                           │
+│       negative pass (delete) ──┐                                                  │
+│                                ├──► union logic ──► pruned column set (9× ↓)    │
+│       positive pass (keep)  ──┘                                                   │
+│                                                                                    │
+│  ③ Parallel Data Profiling  ──► per-table agents run role-specific SQL probes    │
+│                                                                                    │
+│  ④ Global Synthesis  ──► enforce topological connectivity ──► final schema D*    │
+└────────────────────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────── Pre-processing ──────────────────────────────────────┐
+│  ⑤ Macro Plan Aggregation (preprocess_macro_plans.py)                            │
+│  ⑥ Deterministic Tip Retrieval — rule engine → 14-category library ℳ            │
+└────────────────────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────── STAGE 2: Agentic Loop (max 40 actions, 56k tokens) ─┐
+│                                                                                    │
+│   ┌──────────────────────────────────────────────────────┐                        │
+│   │  PROFILING → CONSOLIDATION → SQL SYNTHESIS → CONFIRM │ ← loop until done     │
+│   └──────────────────────────────────────────────────────┘                        │
+│       SQL SYNTHESIS force-triggered at 52k tokens                                 │
+└────────────────────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+Answer Selection: 8 samples ──► majority vote ──► reward model tie-breaker
+    │
+    ▼
+Final SQL
+```
 
 ---
 
@@ -246,6 +350,129 @@ Every leading system combines the same recurring ingredients:
 > Our ablation independently confirms **#3 (Best-of-N) is dominant**; our project adds **#2
 > (value/format grounding)** and **#6 (deterministic format enforcement)**. The leaders' edge is
 > primarily **#4 (full hypothesis-verify loops)** + heavier **#3** — our clearest roadmap.
+
+---
+
+## 11e. Commercial benchmark — Databricks Genie
+
+**Product:** AI/BI Genie — Databricks' conversational NL-to-SQL product, part of the Data
+Intelligence Platform. GA: June 2025. 4 000+ customers adopted during preview.
+**No public Spider 2.0 / BIRD benchmark numbers.** Architected for enterprise governance, not
+academic benchmarking.
+
+**Core architectural philosophy:** the *opposite* of APEX-SQL. Rather than exploring the schema at
+runtime, Genie invests **up-front human curation** to narrow the LLM's task. At query time, the
+LLM selects from pre-verified patterns rather than reasoning over the full schema.
+
+### The Genie Space — configuration unit
+
+| Resource | Hard limit | Contents |
+|:---------|:----------:|:---------|
+| Tables / views | **30** | Unity Catalog tables scoped to this domain |
+| Knowledge store snippets | **200** | Column descriptions, SQL expressions (KPIs, filters, row transforms), join definitions, synonyms |
+| Instructions | **100** | Parameterized example SQL + general text rules (effective up to ~20 lines) |
+| Entity matching | **120 columns**, **1 024 values each** | Pre-sampled distinct-value lists for categoricals |
+
+### 5-layer schema linking
+
+1. **Unity Catalog metadata** (always active) — schema, data types, PK/FK, column descriptions.
+2. **Intelligent filtering** (mechanism not disclosed — likely BM25/embedding) — selects relevant
+   columns and example SQL from the Space at query time.
+3. **Entity matching** — resolves *"Florida"* → `WHERE state = 'FL'`; *"first level support"* →
+   exact DB code. Filters appear as dropdowns populated from stored distinct values.
+4. **Join relationships** — explicit definitions in knowledge store; auto-suggested from UC FK
+   metadata. Prevents join hallucination.
+5. **Genie Ontology** (workspace-wide, newer) — automatic semantic map built from tables,
+   dashboards, notebooks, and connected external docs (Google Drive, SharePoint via MCP).
+
+### LLM backend — compound AI, model rotation without disclosure
+
+| Mode | Model |
+|:-----|:------|
+| Standard Genie Spaces | **Azure OpenAI** (primary); Anthropic Claude (opt-in) |
+| Agent Mode / Research Agent | **Anthropic Claude Sonnet** (explicitly documented) |
+| Partner AI disabled | Databricks-hosted open-weight fallback |
+
+Databricks: *"a managed service that continuously evaluates models from multiple providers and uses
+the most performant and accurate options."* Model versions not disclosed; upgraded at least twice
+(Nov 2024, Sep 2025). **DBRX** (Databricks' own MoE LLM) exists but is *not confirmed* to power
+Genie.
+
+### Agentic evolution timeline
+
+| Date | Capability added |
+|:-----|:----------------|
+| Feb 2025 | Chain-of-Thought reasoning in text-to-SQL model |
+| Sep 2025 | **Self-reflection** — generates SQL, checks its own output before execution |
+| Nov 2025 | Research Agent (Agent Mode) — single unified reasoning agent; multi-hypothesis → single reasoner |
+| Dec 2025 | Clarifying questions on semantic ambiguity |
+| Apr 2026 | Agent Mode public preview (UI only — not available via API) |
+
+**Research Agent loop (Agent Mode, Claude Sonnet):**
+parse → plan hypotheses → execute SQL per hypothesis → reflect on each result → iterate →
+generate report with citations and visualisations. Scales reasoning depth to question complexity.
+
+### Trusted Assets — key differentiator
+
+- **Parameterized example SQL**: if the user's question matches a trusted asset's associated
+  question, Genie runs the *verified* SQL directly (parameter-substituted), **bypassing LLM
+  generation entirely**. Response is flagged "Trusted."
+- **SQL UDFs (Unity Catalog)**: exact function logic executes; always "Trusted."
+- Effect: for frequently-asked or high-stakes queries, the LLM is completely eliminated from the
+  path. Equivalent to our `TraceMemory` roadmap item — but fully implemented.
+
+### Knowledge mining (human-in-the-loop learning)
+Thumbs-up on a response → Genie suggests new SQL expressions and join definitions for the
+knowledge store. Iterative improvement without automated fine-tuning. Databricks: *"we do not
+train foundation models on your data."*
+
+### Constraints (also features)
+Read-only SQL (SELECT only). Per-user Unity Catalog permissions enforced at execution time.
+Compute credentials embedded at Space creation.
+
+**Key tradeoff:** Genie trades *setup cost* for *reliability and governance*. Zero-setup research
+systems (ReFoRCE, APEX-SQL) explore at runtime; Genie offloads that cost to domain-expert curation.
+
+---
+
+## 11f. Three-way comparison — our system vs. APEX-SQL vs. Genie
+
+| Dimension | **Our system** | **APEX-SQL** (KDD 2026) | **Databricks Genie** |
+|:----------|:--------------|:------------------------|:---------------------|
+| **Design** | Dynamic RAG + deterministic compiler | Agentic hypothesis-verify | Curated RAG + trusted assets |
+| **Schema scope** | Full DB via vector/BM25 index + SchemaSlice | Full DB; agent explores at runtime | Hard limit: **30 tables** per Space |
+| **Schema linking** | Hybrid retrieval (BM25 + embedding, RRF k=60) + SchemaSlice post-processing | 4-stage: hypothesis → dual-path pruning → parallel profiling → global synthesis | 5-layer: UC metadata + filtering + entity matching + join defs + Ontology |
+| **SQL generation** | Plan → SQL **compiler** (deterministic); LLM owns intent, compiler owns syntax | 4-action agentic loop; force-triggers synthesis at 52 k tokens | CoT + self-reflection; trusted assets bypass generation entirely |
+| **Self-correction** | Category-classified repair loop (8 Snowflake error categories) | SYNTHESIS re-enters loop on execution error | Self-reflection pre-execution + human "Ask for Review" |
+| **Best-of-N / selection** | Best-of-N with 6 structural strategy variants; multi-signal selector | 8 samples; majority vote + reward model tie-breaker | Not disclosed; single-pass + reflection |
+| **Large schema handling** | Partition collapsing (366 GA360 tables → 1 card); VARIANT enrichment; 1-hop join-graph expansion | 9× column compression at schema-linking time; 40-action budget caps runtime cost | Forces 30-table scope; multiple Spaces for large orgs |
+| **Domain adaptation** | Index rebuild on schema change (minutes for 20 Snow DBs) | Pre-processing runs per task; 14-category tip library curated once | High up-front: curate knowledge store, entity lists, trusted assets, example SQL |
+| **Governance** | None (research) | None (research) | Unity Catalog; per-user permissions; read-only SQL enforced |
+| **LLM** | Provider-neutral; today `gpt-5.4-mini` | Any OAI-compatible; best: DeepSeek-R1, GPT-4.1 | Compound AI — Azure OpenAI primary; Claude Sonnet for Agent Mode |
+| **Spider 2.0-Snow EX** | ~50–60% conventional subset¹ | **53.03%** full (paper) / **73%** (leaderboard) | Not published |
+| **Cost / correct answer** | **$0.11** (measured) | Not reported | Not reported |
+| **Open source** | This repo | github.com/Tencent/APEX-SQL-Project | Closed source |
+
+¹ *Our number is on a curated conventional subset with lenient scoring; not directly comparable
+to the full-benchmark official protocols used for APEX-SQL and the leaderboard.*
+
+**Why our deterministic compiler is an architectural differentiator vs. APEX-SQL:**
+APEX-SQL's agentic loop still lets the LLM own SQL *formatting*. Our Plan→SQL compiler closes the
+entire class of Snowflake-specific syntax errors (`LATERAL FLATTEN`, VARIANT access, quoting) by
+separating intent from syntax. APEX-SQL's 14-category tip library addresses this partially but the
+LLM still emits raw SQL.
+
+**Why partition collapsing matters vs. APEX-SQL:**
+APEX-SQL's runtime exploration encounters 366 GA360 daily tables as separate entities — schema
+linking noise makes GA360 queries near-unreachable without partition-awareness. Our index
+collapses them at build time into one representative card; retrieval is reliable regardless of
+shard count.
+
+**Where Genie wins and what that implies for our roadmap:**
+- Trusted assets = guaranteed correctness for frequently-asked queries (LLM bypassed). Our
+  `TraceMemory` read path is the architectural equivalent; wiring it into the query path is a
+  roadmap item (current activation rate: 0%).
+- Unity Catalog governance: enterprise feature we don't attempt; not a research benchmark concern.
 
 ---
 
