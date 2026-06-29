@@ -1,0 +1,2058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Text-to-SQL Research — Architecture, Results, and SOTA Comparison</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222535;
+    --border: #2e3147;
+    --accent: #6c8ef5;
+    --accent2: #4ade80;
+    --accent3: #f59e0b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --danger: #f87171;
+    --code-bg: #12141e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    font-size: 15px;
+  }
+  /* ── Layout ── */
+  .sidebar {
+    position: fixed; top: 0; left: 0; width: 260px; height: 100vh;
+    background: var(--surface); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 24px 0; z-index: 100;
+  }
+  .sidebar-title {
+    font-size: 11px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--accent); padding: 0 20px 16px;
+    border-bottom: 1px solid var(--border); margin-bottom: 12px;
+  }
+  .sidebar nav a {
+    display: block; padding: 5px 20px; color: var(--muted);
+    text-decoration: none; font-size: 13px; line-height: 1.4;
+    border-left: 3px solid transparent; transition: all .15s;
+  }
+  .sidebar nav a:hover { color: var(--text); border-color: var(--accent); background: var(--surface2); }
+  .sidebar nav .part-header {
+    padding: 14px 20px 4px; font-size: 11px; font-weight: 700;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--accent3);
+  }
+  main {
+    margin-left: 260px; padding: 48px 56px; max-width: 1100px;
+  }
+  /* ── Typography ── */
+  h1 { font-size: 2rem; font-weight: 800; color: var(--accent); margin: 0 0 8px; line-height: 1.2; }
+  h2 { font-size: 1.35rem; font-weight: 700; color: var(--accent); margin: 48px 0 16px;
+       padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1.05rem; font-weight: 700; color: var(--accent2); margin: 28px 0 10px; }
+  h4 { font-size: .95rem; font-weight: 600; color: var(--accent3); margin: 20px 0 8px; }
+  p { margin: 0 0 14px; }
+  em { color: var(--muted); }
+  strong { color: #fff; font-weight: 600; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  /* Part headers */
+  h1[id^="part"] {
+    font-size: 1.1rem; font-weight: 800; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--accent3); background: var(--surface2);
+    padding: 12px 20px; border-radius: 8px; border-left: 4px solid var(--accent3);
+    margin: 56px 0 8px;
+  }
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; margin: 20px 0 24px; font-size: 13.5px; }
+  thead tr { background: var(--surface2); }
+  th { padding: 10px 14px; text-align: left; font-weight: 600; color: var(--accent);
+       border-bottom: 2px solid var(--border); white-space: nowrap; }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:nth-child(even) { background: rgba(255,255,255,.02); }
+  tr:hover { background: var(--surface2); }
+  /* ── Code ── */
+  code { background: var(--code-bg); color: #a5f3fc; padding: 2px 6px;
+          border-radius: 4px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: .85em; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
+         padding: 20px 24px; overflow-x: auto; margin: 16px 0 24px; }
+  pre code { background: none; padding: 0; font-size: .82em; color: #c8d3f5; line-height: 1.6; }
+  /* ── Lists ── */
+  ul, ol { margin: 8px 0 14px 24px; }
+  li { margin-bottom: 5px; }
+  /* ── Blockquotes / callouts ── */
+  blockquote {
+    border-left: 4px solid var(--accent); background: var(--surface2);
+    padding: 14px 20px; margin: 16px 0; border-radius: 0 8px 8px 0;
+    color: var(--text);
+  }
+  blockquote p { margin: 0; }
+  /* ── HR / separators ── */
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  /* ── Part banners ── */
+  .part-banner {
+    background: linear-gradient(135deg, var(--surface2), #1e2235);
+    border: 1px solid var(--accent3); border-radius: 10px;
+    padding: 20px 28px; margin: 48px 0 32px;
+  }
+  .part-banner h1 {
+    font-size: 1.2rem; color: var(--accent3); margin: 0 0 4px;
+    background: none; border: none; padding: 0;
+  }
+  .part-banner p { margin: 0; color: var(--muted); font-size: .9rem; }
+  /* ── Intro block ── */
+  .intro { background: var(--surface); border-radius: 10px; padding: 24px 32px; margin-bottom: 40px;
+            border: 1px solid var(--border); }
+  .intro h1 { font-size: 1.6rem; }
+  .intro p { color: var(--muted); margin: 6px 0 0; }
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .sidebar { display: none; }
+    main { margin-left: 0; padding: 24px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-title">Text-to-SQL Research</div>
+  <nav>
+    <div class="part-header">Part 1 — Gold Solution</div>
+    <a href="#architecture">Architecture</a>
+    <a href="#layer-1----hybrid-retrieval-index">Layer 1: Hybrid Index</a>
+    <a href="#layer-2----plan--sql-compiler-deterministic">Layer 2: Compiler</a>
+    <a href="#layer-3----best-of-n-with-structural-strategy-diversification">Layer 3: Best-of-N</a>
+    <a href="#layer-4----self-correction-repair-loop">Layer 4: Repair Loop</a>
+    <a href="#layer-5----verification-fingerprint--metamorphic">Layer 5: Verification</a>
+    <a href="#gold-fed-ablation----which-components-drive-accuracy">Ablation Results</a>
+    <a href="#2a-component-ablation-n--30-gpt-54-mini-best-of-n--4-max_repairs--3">Component Ablation n=30</a>
+    <a href="#2b-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n--4">25-Query Sweep</a>
+    <a href="#2c-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">N Scaling Curve</a>
+    <a href="#2d-100-query-benchmark----gold-fed-ceiling-at-scale">100-Query Benchmark</a>
+    <a href="#2e-interpreting-the-gold-fed-number----what-it-means-and-doesnt">Interpreting Gold</a>
+    <div class="part-header">Part 2 — No-Gold</div>
+    <a href="#what-changed-the-no-gold-architecture">Architecture Changes</a>
+    <a href="#3a-self-consistency--mbr-voting-replaces-gold-assisted-selection">Self-Consistency Voting</a>
+    <a href="#3b-self-critic-repair-loop-replaces-gold-driven-result_mismatch">Self-Critic Repair</a>
+    <a href="#3c-exploration-front-end">Exploration</a>
+    <a href="#3d-deterministic-data-format-enforcement">Format Enforcement</a>
+    <a href="#no-gold-results">No-Gold Results</a>
+    <a href="#4a-oracle-gap-hardest-slice----ga360ga4-first-10-non-geo-instances">Oracle Gap</a>
+    <a href="#4b-model--method-interaction">Model × Method</a>
+    <a href="#4d-conventional-schemas----fix-by-fix-progression-no-gold-n20-lenient-scoring">Fix-by-Fix</a>
+    <div class="part-header">Part 3 — SOTA</div>
+    <a href="#apex-sql----current-academicopen-sota">APEX-SQL</a>
+    <a href="#stage-1----schema-linking-4-steps">Schema Linking</a>
+    <a href="#stage-2----sql-generation-pre-processing--agentic-loop--selection">SQL Generation</a>
+    <a href="#apex-sql-benchmark-results">APEX-SQL Results</a>
+    <a href="#other-sota-methods">Other Methods</a>
+    <a href="#databricks-genie----commercial-architecture">Databricks Genie</a>
+    <a href="#sota-ranked-spider-20-snow-execution-accuracy">SOTA Ranking</a>
+    <a href="#three-way-comparison-our-system-vs-apex-sql-vs-databricks-genie">3-Way Comparison</a>
+    <a href="#where-we-stand-and-what-closing-the-gap-requires">Gap Analysis</a>
+  </nav>
+</aside>
+
+<main>
+<h1 id="text-to-sql-research-architecture-results-and-sota-comparison">Text-to-SQL Research — Architecture, Results, and SOTA Comparison</h1>
+
+<p><em>Spider 2.0-Snow: 547 NL→SQL tasks over enterprise Snowflake databases.</em>
+<em>Source data: <code>GOLD_FED_ABLATION_REPORT.md</code>, <code>GOLD_FED_100Q_REPORT.md</code>, <code>NOGOLD_EXPERIMENT_REPORT.md</code>, <code>FINAL_REPORT.md</code>, <code>PRESENTATION.md</code>.</em></p>
+
+<hr />
+
+<h1 id="part-1-gold-assisted-solution">PART 1 — GOLD-ASSISTED SOLUTION</h1>
+
+<p><em>The gold-fed system uses the reference answer as a stopping signal during self-refinement.
+This is the <strong>research ceiling</strong> — not deployable accuracy. It is the cleanest setting for
+isolating component value because the oracle removes selection ambiguity.</em></p>
+
+<hr />
+
+<h2 id="1-architecture">1. Architecture</h2>
+
+<p>Five layers, each addressing a concrete failure class in enterprise Text-to-SQL.</p>
+
+<h3 id="layer-1-hybrid-retrieval-index">Layer 1 — Hybrid retrieval index</h3>
+
+<p><strong>What:</strong> BM25 + <code>text-embedding-3-large</code> with Reciprocal Rank Fusion (k = 60) over a
+purpose-built entity-oriented index stored in ChromaDB.</p>
+
+<p><strong>Why:</strong> Full-schema prompting fails on enterprise warehouses (3 000+ columns). Retrieving the
+right schema cards rather than dumping everything is the prerequisite for every other layer.</p>
+
+<p><strong>Index cards (one discrete metadata element each):</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Card type</th>
+  <th style="text-align:left;">What it captures</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;"><code>TableCard</code></td>
+  <td style="text-align:left;">Table name, description, row count, business role</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>ColumnCard</code></td>
+  <td style="text-align:left;">Column name, type, description, sample values, cardinality hint</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>JoinCard</code></td>
+  <td style="text-align:left;">Explicit join relationships (FK, implicit, common-key)</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>SemanticCard</code></td>
+  <td style="text-align:left;">Business term → column mappings; synonym dictionaries</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>SampleRecord</code></td>
+  <td style="text-align:left;">Representative row values per table (value grounding)</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>TraceMemory</code></td>
+  <td style="text-align:left;">Successful past query traces (not yet wired into production path)</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>SnowflakeSyntax</code></td>
+  <td style="text-align:left;">Dialect tips: LATERAL FLATTEN, VARIANT access, NULLS LAST, date casts</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Partition collapsing:</strong> temporally-sharded sources (GA360: 366 daily tables, GA4) are collapsed
+at index-build time into one representative <code>TableCard</code> per logical table. Without this, GA360
+schema linking is retrieval-noise — the 366 shards overwhelm retrieval ranking.</p>
+
+<p><strong>SchemaSlice post-processing:</strong> after retrieval, a deterministic multi-stage filter trims the
+retrieved set further:
+- Protected identifiers (join columns, time columns) resist trimming
+- 1-hop join-graph expansion: add tables reachable via one FK hop from any retained table
+- VARIANT enrichment: inject <code>SnowflakeSyntax</code> cards for tables with nested JSON/ARRAY columns</p>
+
+<hr />
+
+<h3 id="layer-2-plan-sql-compiler-deterministic">Layer 2 — Plan → SQL compiler (deterministic)</h3>
+
+<p><strong>What:</strong> the LLM does not emit SQL directly. It emits a structured <code>QueryPlan</code> (YAML/JSON
+describing tables, columns, joins, filters, aggregations, output columns). A deterministic Python
+compiler transforms the plan into Snowflake SQL.</p>
+
+<p><strong>Why:</strong> the LLM's syntactic priors are wrong for Snowflake. <code>LATERAL FLATTEN</code>, <code>VARIANT:field</code>,
+<code>TO_TIMESTAMP(col/1e6)::DATE</code>, quoting rules — prompting doesn't reliably override these. A
+compiler that <em>owns</em> syntax closes the entire class of dialect-formatting errors.</p>
+
+<p><strong>Effect:</strong> the LLM owns <em>intent</em>; the compiler owns <em>correctness</em>. Semantically correct plans
+that would have produced syntax errors now execute.</p>
+
+<p><strong>Current compiler plan types:</strong> <code>PlanSelect</code>, <code>PlanAggregate</code>, <code>PlanJoin</code>, <code>PlanFlatten</code>,
+<code>PlanCTE</code>, <code>PlanWindowFunction</code>, <code>PlanDateShard</code>. <code>PlanGeoJoin</code>/<code>PlanGeoFilter</code> are partially
+implemented (geospatial is the largest remaining gap — see §5).</p>
+
+<hr />
+
+<h3 id="layer-3-best-of-n-with-structural-strategy-diversification">Layer 3 — Best-of-N with structural strategy diversification</h3>
+
+<p><strong>What:</strong> generate N SQL candidates, each from a structurally different prompting strategy, then
+select the best by a multi-signal selector.</p>
+
+<p><strong>Strategies (cycled by index, one per candidate):</strong>
+<code>default</code> → <code>flatten_first</code> → <code>join_first</code> → <code>metric_first</code> → <code>time_first</code> → <code>cte_first</code> → <code>geo_first</code> → <code>default</code> (repeat)</p>
+
+<p>Each strategy alters the prompt's emphasis — <code>join_first</code> anchors on join traversal before
+aggregation; <code>flatten_first</code> leads with LATERAL FLATTEN for nested columns; <code>metric_first</code> leads
+with the output metric and works backward to sources. This creates <em>structural</em> diversity, not
+stochastic re-sampling of the same prompt.</p>
+
+<p><strong>Selection (multi-signal):</strong> the selector scores candidates on: (1) execution success,
+(2) result non-emptiness, (3) result-set agreement across candidates (self-consistency voting),
+(4) fingerprint verification, (5) metamorphic check, (6) learned verifier score (when trained).</p>
+
+<p><strong>Gold-fed mode:</strong> gold result is used as an additional selection signal — the selector picks the
+candidate whose executed result matches gold. This is the oracle that creates the gold-fed ceiling.</p>
+
+<hr />
+
+<h3 id="layer-4-self-correction-repair-loop">Layer 4 — Self-correction repair loop</h3>
+
+<p><strong>What:</strong> after a candidate executes (success or error), an LLM-driven repair loop inspects
+<code>(question, SQL, execution result or error)</code> and attempts targeted fixes.</p>
+
+<p><strong>Gold-fed signal:</strong> when <code>--gold_dir</code> is active, the loop injects a synthetic <code>RESULT_MISMATCH</code>
+error if the result differs from gold — driving repair even on executing-but-wrong SQL.</p>
+
+<p><strong>Error categories (8 Snowflake-specific classes):</strong>
+<code>SYNTAX_ERROR</code>, <code>COLUMN_NOT_FOUND</code>, <code>TYPE_MISMATCH</code>, <code>RESULT_MISMATCH</code>, <code>EMPTY_RESULT</code>,
+<code>WRONG_AGGREGATION</code>, <code>WRONG_JOIN</code>, <code>VARIANT_ACCESS_ERROR</code></p>
+
+<p>Each category triggers a different repair prompt with category-specific guidance (e.g.
+<code>VARIANT_ACCESS_ERROR</code> hints at <code>:field</code> vs <code>['field']</code> vs <code>GET_PATH</code>).</p>
+
+<p><strong>Budget:</strong> <code>max_repairs</code> attempts per candidate (typically 3–4). Repair stops on gold match
+(gold-fed) or when the budget is exhausted.</p>
+
+<hr />
+
+<h3 id="layer-5-verification-fingerprint-metamorphic">Layer 5 — Verification (fingerprint + metamorphic)</h3>
+
+<p><strong>What:</strong> two lightweight post-execution checks on the selected candidate.</p>
+
+<ul>
+<li><strong>Fingerprint check:</strong> hashes the executed result and checks it against a cached fingerprint for
+the same question. Catches exact repeats of known-wrong results.</li>
+<li><strong>Metamorphic check:</strong> runs a semantically equivalent reformulation of the question and checks
+whether both produce consistent results. Catches silent semantic errors.</li>
+</ul>
+
+<p><strong>Observation:</strong> both checks fired 0% on the ablation's 25-query slice — these components are
+targeted at failure modes that appear in larger or more diverse query sets.</p>
+
+<hr />
+
+<h2 id="2-gold-fed-ablation-which-components-drive-accuracy">2. Gold-fed ablation — which components drive accuracy</h2>
+
+<h3 id="2a-component-ablation-n-30-gpt-54-mini-best-of-n-4-max_repairs-3">2a. Component ablation (n = 30, gpt-5.4-mini, Best-of-N = 4, max_repairs = 3)</h3>
+
+<p><em>Paired leave-one-out: each arm removes one component; all others held fixed. Gold-fed throughout.</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:right;">Rank</th>
+  <th style="text-align:left;">Component removed</th>
+  <th style="text-align:right;">Accuracy</th>
+  <th style="text-align:right;">Δ vs full</th>
+  <th style="text-align:center;">95% CI</th>
+  <th style="text-align:left;">Tier</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:right;">—</td>
+  <td style="text-align:left;"><strong>Full system</strong></td>
+  <td style="text-align:right;"><strong>90.0%</strong> (27/30)</td>
+  <td style="text-align:right;">—</td>
+  <td style="text-align:center;">—</td>
+  <td style="text-align:left;">reference</td>
+</tr>
+<tr>
+  <td style="text-align:right;">1</td>
+  <td style="text-align:left;"><strong>Best-of-N</strong></td>
+  <td style="text-align:right;">10.0% (3/30)</td>
+  <td style="text-align:right;"><strong>−80.0 pp</strong></td>
+  <td style="text-align:center;">[63.3, 93.3]</td>
+  <td style="text-align:left;"><strong>Dominant</strong></td>
+</tr>
+<tr>
+  <td style="text-align:right;">—</td>
+  <td style="text-align:left;"><strong>Bare baseline</strong> (all off)</td>
+  <td style="text-align:right;">3.3% (1/30)</td>
+  <td style="text-align:right;"><strong>−86.7 pp</strong></td>
+  <td style="text-align:center;">[73.3, 96.7]</td>
+  <td style="text-align:left;">—</td>
+</tr>
+<tr>
+  <td style="text-align:right;">2</td>
+  <td style="text-align:left;">Repair loop</td>
+  <td style="text-align:right;">73.3% (22/30)</td>
+  <td style="text-align:right;">−16.7 pp</td>
+  <td style="text-align:center;">[0.0, 33.3]</td>
+  <td style="text-align:left;">Signal (weak)</td>
+</tr>
+<tr>
+  <td style="text-align:right;">3</td>
+  <td style="text-align:left;">Sample-records prompting</td>
+  <td style="text-align:right;">80.0% (24/30)</td>
+  <td style="text-align:right;">−10.0 pp</td>
+  <td style="text-align:center;">[0.0, 23.3]</td>
+  <td style="text-align:left;">Within noise</td>
+</tr>
+<tr>
+  <td style="text-align:right;">4</td>
+  <td style="text-align:left;">Verification</td>
+  <td style="text-align:right;">83.3% (25/30)</td>
+  <td style="text-align:right;">−6.7 pp</td>
+  <td style="text-align:center;">[−6.7, 20.0]</td>
+  <td style="text-align:left;">Within noise</td>
+</tr>
+<tr>
+  <td style="text-align:right;">5</td>
+  <td style="text-align:left;">Semantic layer</td>
+  <td style="text-align:right;">83.3% (25/30)</td>
+  <td style="text-align:right;">−6.7 pp</td>
+  <td style="text-align:center;">[0.0, 16.7]</td>
+  <td style="text-align:left;">Within noise</td>
+</tr>
+<tr>
+  <td style="text-align:right;">6</td>
+  <td style="text-align:left;">Learned verifier</td>
+  <td style="text-align:right;">83.3% (25/30)</td>
+  <td style="text-align:right;">−6.7 pp</td>
+  <td style="text-align:center;">[−6.7, 20.0]</td>
+  <td style="text-align:left;">Within noise</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Token cost by arm:</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Arm</th>
+  <th style="text-align:right;">Total tokens</th>
+  <th style="text-align:right;">Avg LLM calls/q</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Full system</td>
+  <td style="text-align:right;">2,670,814</td>
+  <td style="text-align:right;">17.2</td>
+</tr>
+<tr>
+  <td style="text-align:left;">− Best-of-N</td>
+  <td style="text-align:right;">673,291</td>
+  <td style="text-align:right;">5.3</td>
+</tr>
+<tr>
+  <td style="text-align:left;">− Repair loop</td>
+  <td style="text-align:right;">1,537,049</td>
+  <td style="text-align:right;">8.0</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Bare baseline</td>
+  <td style="text-align:right;">327,038</td>
+  <td style="text-align:right;">3.0</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Key readings:</strong>
+- Best-of-N uses <strong>4× tokens</strong> for <strong>+80 pp accuracy</strong> — unambiguously worth it.
+- Repair loop costs <strong>~2× tokens</strong> for <strong>+16.7 pp</strong> — real but the CI floor touches 0.
+- Knowledge components (semantic, sample-records, verifier, verification) show <strong>no statistically
+  reliable gain at n=30</strong> — not proven useless (n=30 cannot detect true +5–10 pp effects), but
+  require validation at larger N before further investment.</p>
+
+<hr />
+
+<h3 id="2b-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n-4">2b. 25-query sweep with cost tracking (gpt-5.4-mini, Best-of-N = 4)</h3>
+
+<p><em>Full 8-cell leave-one-out with token and cost telemetry. Reference: A0_full = 80% at bon=4.</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Cell</th>
+  <th style="text-align:right;">Accuracy</th>
+  <th style="text-align:right;">Δ acc</th>
+  <th style="text-align:right;">Tokens</th>
+  <th style="text-align:right;">$ cost</th>
+  <th style="text-align:right;">Tok/correct</th>
+  <th style="text-align:right;">Wall-clock</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;"><strong>A0_full</strong> (reference)</td>
+  <td style="text-align:right;"><strong>80.0%</strong></td>
+  <td style="text-align:right;">=</td>
+  <td style="text-align:right;">2,058,508</td>
+  <td style="text-align:right;">$0.437</td>
+  <td style="text-align:right;">102,925</td>
+  <td style="text-align:right;">302 s</td>
+</tr>
+<tr>
+  <td style="text-align:left;">A1 no Best-of-N</td>
+  <td style="text-align:right;">16.0%</td>
+  <td style="text-align:right;">−64 pp</td>
+  <td style="text-align:right;">553,626</td>
+  <td style="text-align:right;">$0.121</td>
+  <td style="text-align:right;">138,406</td>
+  <td style="text-align:right;">256 s</td>
+</tr>
+<tr>
+  <td style="text-align:left;">A2 no Verification</td>
+  <td style="text-align:right;">88.0%</td>
+  <td style="text-align:right;">+8 pp</td>
+  <td style="text-align:right;">2,088,229</td>
+  <td style="text-align:right;">$0.444</td>
+  <td style="text-align:right;">94,920</td>
+  <td style="text-align:right;">342 s</td>
+</tr>
+<tr>
+  <td style="text-align:left;">A3 no Repair</td>
+  <td style="text-align:right;">68.0%</td>
+  <td style="text-align:right;">−12 pp</td>
+  <td style="text-align:right;">1,203,450</td>
+  <td style="text-align:right;">$0.252</td>
+  <td style="text-align:right;">70,791</td>
+  <td style="text-align:right;">75 s</td>
+</tr>
+<tr>
+  <td style="text-align:left;">A4 no Sample-records</td>
+  <td style="text-align:right;">92.0%</td>
+  <td style="text-align:right;">+12 pp</td>
+  <td style="text-align:right;">1,821,852</td>
+  <td style="text-align:right;">$0.409</td>
+  <td style="text-align:right;">79,211</td>
+  <td style="text-align:right;">108 s</td>
+</tr>
+<tr>
+  <td style="text-align:left;">A5 no Join-graph</td>
+  <td style="text-align:right;">80.0%</td>
+  <td style="text-align:right;">0 pp</td>
+  <td style="text-align:right;">2,068,766</td>
+  <td style="text-align:right;">$0.441</td>
+  <td style="text-align:right;">103,438</td>
+  <td style="text-align:right;">103 s</td>
+</tr>
+<tr>
+  <td style="text-align:left;">A6 no Semantic</td>
+  <td style="text-align:right;">84.0%</td>
+  <td style="text-align:right;">+4 pp</td>
+  <td style="text-align:right;">2,046,037</td>
+  <td style="text-align:right;">$0.436</td>
+  <td style="text-align:right;">97,430</td>
+  <td style="text-align:right;">115 s</td>
+</tr>
+<tr>
+  <td style="text-align:left;">A7 Baseline</td>
+  <td style="text-align:right;">8.0%</td>
+  <td style="text-align:right;">−72 pp</td>
+  <td style="text-align:right;">263,548</td>
+  <td style="text-align:right;">$0.057</td>
+  <td style="text-align:right;">131,774</td>
+  <td style="text-align:right;">24 s</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>$0.022 per correct answer at Best-of-N = 4, 25-query slice.</strong></p>
+
+<p><strong>Activation rates in A0_full:</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Component</th>
+  <th style="text-align:right;">Fired</th>
+  <th style="text-align:right;">Rate</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Best-of-N</td>
+  <td style="text-align:right;">25/25</td>
+  <td style="text-align:right;">100%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Semantic layer</td>
+  <td style="text-align:right;">25/25</td>
+  <td style="text-align:right;">100%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Sample records</td>
+  <td style="text-align:right;">25/25</td>
+  <td style="text-align:right;">100%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Date-shard rewriter</td>
+  <td style="text-align:right;">4/25</td>
+  <td style="text-align:right;">16%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Join-graph expansion</td>
+  <td style="text-align:right;">0/25</td>
+  <td style="text-align:right;">0%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Geo-model routing</td>
+  <td style="text-align:right;">0/25</td>
+  <td style="text-align:right;">0%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Trace memory (read)</td>
+  <td style="text-align:right;">0/25</td>
+  <td style="text-align:right;">0%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Learned verifier</td>
+  <td style="text-align:right;">0/25</td>
+  <td style="text-align:right;">0%</td>
+</tr>
+</tbody>
+</table>
+
+<p>Zero-rate components are <strong>targeted triggers</strong> — they fire on the right query class. Join-graph
+(0% on 25 non-geo) fires 5× on the 100-query geo-inclusive benchmark.</p>
+
+<hr />
+
+<h3 id="2c-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">2c. Best-of-N scaling curve (same 25 instances, gpt-5.4-mini)</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:right;">N</th>
+  <th style="text-align:left;">Source</th>
+  <th style="text-align:right;">Accuracy</th>
+  <th style="text-align:right;">Tokens</th>
+  <th style="text-align:right;">Cost</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:right;">1</td>
+  <td style="text-align:left;">A1<em>no</em>best<em>of</em>n</td>
+  <td style="text-align:right;">16%</td>
+  <td style="text-align:right;">554k</td>
+  <td style="text-align:right;">$0.12</td>
+</tr>
+<tr>
+  <td style="text-align:right;"><strong>4</strong></td>
+  <td style="text-align:left;"><strong>A0_full (ablation reference)</strong></td>
+  <td style="text-align:right;"><strong>80%</strong></td>
+  <td style="text-align:right;">2.06M</td>
+  <td style="text-align:right;">$0.44</td>
+</tr>
+<tr>
+  <td style="text-align:right;">8</td>
+  <td style="text-align:left;">benchmark<em>run</em>gpt54mini_25</td>
+  <td style="text-align:right;"><strong>100%</strong></td>
+  <td style="text-align:right;">4.22M</td>
+  <td style="text-align:right;">$0.90</td>
+</tr>
+</tbody>
+</table>
+
+<p>The scaling is <strong>monotonic and large</strong>: every doubling of N adds 64 pp then 20 pp. The 5 failures
+at N=4 decompose as: 1 unreachable (needed strategy index ≥ 5), 4 lost to sampling variance
+at the winning strategy (existed at N=4 but wasn't drawn). The architecture's measured ceiling on
+this slice is <strong>100% at N=8</strong>.</p>
+
+<hr />
+
+<h3 id="2d-100-query-benchmark-gold-fed-ceiling-at-scale">2d. 100-query benchmark — gold-fed ceiling at scale</h3>
+
+<p><em>Best-of-N = 8, max_repairs = 4, three independent runs across a broader 100-query set that
+includes geospatial databases.</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Run</th>
+  <th style="text-align:right;">Accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">benchmark<em>run</em>10</td>
+  <td style="text-align:right;">87% (87/100)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">benchmark<em>run</em>11</td>
+  <td style="text-align:right;">81% (81/100)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">benchmark<em>run</em>12</td>
+  <td style="text-align:right;">84% (84/100)</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Mean</strong></td>
+  <td style="text-align:right;"><strong>84%</strong> (range 81–87%)</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Stability breakdown:</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Outcome</th>
+  <th style="text-align:right;">Count</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Always correct (3/3 runs)</td>
+  <td style="text-align:right;">76</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Flaky (1–2 of 3 runs)</td>
+  <td style="text-align:right;">14</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Never correct (0/3 runs)</td>
+  <td style="text-align:right;">10</td>
+</tr>
+</tbody>
+</table>
+
+<p>Reliable solved core: <strong>76%</strong>. Hard unsolvable core: <strong>10%</strong>. The ±3 pp run variance is the
+flaky band — questions the architecture sometimes gets, sometimes doesn't.</p>
+
+<p><strong>Domain breakdown:</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Database</th>
+  <th style="text-align:center;">Solved (majority of 3 runs)</th>
+  <th style="text-align:left;"></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">GITHUB_REPOS</td>
+  <td style="text-align:center;">15/15</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">NOAA_DATA</td>
+  <td style="text-align:center;">12/12</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">PATENTS</td>
+  <td style="text-align:center;">14/15</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">GA360</td>
+  <td style="text-align:center;">10/12</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">CMS_DATA</td>
+  <td style="text-align:center;">7/7</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">CENSUS<em>BUREAU</em>ACS_2</td>
+  <td style="text-align:center;">2/4</td>
+  <td style="text-align:left;">⚠️</td>
+</tr>
+<tr>
+  <td style="text-align:left;">GEO_OPENSTREETMAP</td>
+  <td style="text-align:center;">3/6</td>
+  <td style="text-align:left;">❌</td>
+</tr>
+<tr>
+  <td style="text-align:left;">NEW<em>YORK</em>NOAA</td>
+  <td style="text-align:center;">1/3</td>
+  <td style="text-align:left;">❌</td>
+</tr>
+<tr>
+  <td style="text-align:left;">NEW<em>YORK</em>CITIBIKE_1</td>
+  <td style="text-align:center;">1/3</td>
+  <td style="text-align:left;">❌</td>
+</tr>
+</tbody>
+</table>
+
+<p>Geospatial (<code>ST_*</code> / distance predicates) is the dominant weak domain.</p>
+
+<hr />
+
+<h3 id="2e-interpreting-the-gold-fed-number-what-it-means-and-doesnt">2e. Interpreting the gold-fed number — what it means and doesn't</h3>
+
+<p>Gold is consumed in <strong>two separate places</strong>:
+1. <strong>Selection</strong> — pick the best-of-N candidate whose result matches gold
+2. <strong>Repair</strong> — keep iterating toward gold until it matches</p>
+
+<p>The ablation's <code>no_repair</code> arm removed only the repair <em>iterations</em> with gold <em>selection still
+on</em>. So "+16.7 pp for repair" means the value of iterative repair <strong>given</strong> gold-assisted
+selection — not the value of gold itself.</p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Config</th>
+  <th style="text-align:center;">Gold for selection?</th>
+  <th style="text-align:center;">Gold-driven repair?</th>
+  <th style="text-align:right;">Accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Full gold-fed</td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:right;">~84–90%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">No-repair arm (ablation)</td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:center;">❌</td>
+  <td style="text-align:right;">~73%</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>No gold at all (deployable)</strong></td>
+  <td style="text-align:center;">❌</td>
+  <td style="text-align:center;">❌</td>
+  <td style="text-align:right;"><strong>~33–60%</strong></td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Going to no-gold removes the signal from both</strong> — and the bigger loss is selection (~40 pp
+combined), not the repair loop (~17 pp). The gold-fed ceiling is the target a good
+<em>no-gold verifier</em> would chase; it is not deployable accuracy.</p>
+
+<hr />
+
+<h1 id="part-2-no-gold-deployable-solution">PART 2 — NO-GOLD (DEPLOYABLE) SOLUTION</h1>
+
+<p><em>No gold oracle at any point during inference. Scored post-hoc by running predictions against
+gold after the fact, with the agent fully blind.</em></p>
+
+<hr />
+
+<h2 id="3-what-changed-the-no-gold-architecture">3. What changed: the no-gold architecture</h2>
+
+<h3 id="3a-self-consistency-mbr-voting-replaces-gold-assisted-selection">3a. Self-consistency / MBR voting (replaces gold-assisted selection)</h3>
+
+<p><strong>Implementation:</strong> <code>selector.py</code> / <code>best_of_n.py</code>.</p>
+
+<p>Candidates are clustered by an order-insensitive signature of their <strong>executed result</strong> (not SQL
+text). A candidate receives <code>consensus_bonus × (independent_votes − 1)</code>, where a "vote" counts
+only from a <strong>distinct strategy</strong> — so running the same strategy twice cannot inflate its score.
+The candidate with the highest total bonus wins.</p>
+
+<p><strong>Why result-clustering, not SQL-text clustering:</strong> two queries with different SQL but identical
+result sets are equivalent. Result-cluster voting selects by <em>semantic correctness</em>, not syntactic
+similarity.</p>
+
+<p><strong>Why consensus works:</strong> independent strategies produce the same result only when they agree on
+table semantics, join path, and aggregation logic. Accidental agreement across structurally diverse
+strategies is rare; genuine agreement is evidence of correctness.</p>
+
+<hr />
+
+<h3 id="3b-self-critic-repair-loop-replaces-gold-driven-result_mismatch">3b. Self-critic repair loop (replaces gold-driven RESULT_MISMATCH)</h3>
+
+<p><strong>Implementation:</strong> <code>refiner.py</code> — <code>SELF_CRITIQUE</code> repair mode.</p>
+
+<p>An LLM inspects <code>(question, SQL, result preview)</code> and, if it diagnoses a concrete error, drives
+a repair attempt. It never marks a successfully-executing SQL as failed — it only spends extra
+repair budget when it finds a specific problem.</p>
+
+<p><strong>Diagnostic quality vs repair quality:</strong> the self-critic's diagnoses are model-independent (both
+gpt-5.4-mini and gpt-5.4 produce sharp diagnoses like <em>"returns only one month but the question
+asks for June and July"</em>, <em>"scans only EVENTS_20210131 so the Jan 1–7 filter can't access those
+dates"</em>). But <strong>repair quality is model-dependent</strong> — only gpt-5.4 can translate a correct
+diagnosis into a fixed query. This is the model × method interaction.</p>
+
+<p><strong>Robustness guard:</strong> on <code>sf_bq269</code> the critic's repairs pushed all 4 candidates into
+<code>sql_syntax_error</code> (baseline: wrong-but-executing → improved: broken). Fix: revert to the last
+successfully-executing SQL when a repair breaks execution.</p>
+
+<hr />
+
+<h3 id="3c-exploration-front-end">3c. Exploration front-end</h3>
+
+<p>Runs read-only SQL probes <em>before</em> generating the answer query:
+- <strong>Entity resolution:</strong> <code>SELECT DISTINCT col FROM table LIMIT 20</code> — discovers real values for
+  filter conditions (product names, category codes, ID formats).
+- <strong>Format detection:</strong> probes epoch-vs-YYYYMMDD date columns, VARIANT field names, nested array depth.
+- <strong>Existence checks:</strong> confirms the candidate tables are non-empty and the relevant columns exist.</p>
+
+<p>Results feed the prompt as grounding facts, replacing model guesses with real database evidence.</p>
+
+<hr />
+
+<h3 id="3d-deterministic-data-format-enforcement">3d. Deterministic data-format enforcement</h3>
+
+<p><strong>Problem:</strong> the model's priors (e.g. "date = YYYYMMDD") override soft prompt hints reliably.
+A query that should use <code>TO_TIMESTAMP(col/1e6)::DATE</code> will get <code>CAST(col AS DATE)</code> from prompting.</p>
+
+<p><strong>Solution:</strong> code-level rewrite rules in <code>prompting/sql_compiler.py</code> that detect and fix:
+- Epoch-microsecond integer columns: <code>col</code> → <code>TO_TIMESTAMP(col/1e6)::DATE</code>
+- Native date columns incorrectly cast: fix to <code>DATE 'YYYY-MM-DD'</code> literals
+- VARIANT access: normalize <code>:field</code> vs <code>['field']</code> vs <code>GET_PATH(col, 'field')</code> per dialect</p>
+
+<p>These are applied <em>after</em> generation, deterministically, regardless of what the LLM emitted.</p>
+
+<hr />
+
+<h3 id="3e-information-aggregation-planning">3e. Information-aggregation planning</h3>
+
+<p>A structured pre-generation step that builds a plan before emitting SQL:
+- Entity → column mapping (which real column names map to the question's entities)
+- Join path (which tables connect, via which keys)
+- Constraint checklist (every filter condition explicitly listed)
+- Format reconciliation (date encodings, ID types, VARIANT paths resolved from exploration)</p>
+
+<p><strong>Effect:</strong> eliminates dropped constraints (a missing filter that the model silently ignored).
+Single-instance recovery: <code>sf_bq153</code> (a specific gene filter constraint that vanilla generation dropped).</p>
+
+<hr />
+
+<h3 id="3f-schema-indexing-as-infrastructure-prerequisite">3f. Schema indexing as infrastructure prerequisite</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Schema indexed in vector store?</th>
+  <th style="text-align:center;">Executed successfully</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">No (agent starts blind)</td>
+  <td style="text-align:center;"><strong>5/36</strong></td>
+</tr>
+<tr>
+  <td style="text-align:left;">Yes (after <code>build_index</code>)</td>
+  <td style="text-align:center;"><strong>19/20</strong></td>
+</tr>
+</tbody>
+</table>
+
+<p>A "low accuracy" run on an unindexed database is an infrastructure gap, not a model failure.
+Indexing coverage must be verified before attributing failures to the architecture.</p>
+
+<hr />
+
+<h2 id="4-no-gold-results">4. No-gold results</h2>
+
+<h3 id="4a-oracle-gap-hardest-slice-ga360ga4-first-10-non-geo-instances">4a. Oracle gap (hardest slice — GA360/GA4, first 10 non-geo instances)</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Mode</th>
+  <th style="text-align:right;">Accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Gold-fed (sees gold, repairs to it)</td>
+  <td style="text-align:right;">10/10 (100%)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">No-gold baseline</td>
+  <td style="text-align:right;">1/10 (10%)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">No-gold improved (gpt-5.4 + consensus + self-critic)</td>
+  <td style="text-align:right;"><strong>5/10 (50%)</strong></td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>The gold→no-gold gap on this hardest slice is ~90 pp.</strong> The improved no-gold system recovers
+half the ceiling.</p>
+
+<hr />
+
+<h3 id="4b-model-method-interaction">4b. Model × method interaction</h3>
+
+<p><em>Same 10-instance hard slice (GA360/GA4), no-gold:</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;"></th>
+  <th style="text-align:center;">gpt-5.4-<strong>mini</strong></th>
+  <th style="text-align:center;">gpt-5.4</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Baseline (no consensus, no self-critic)</td>
+  <td style="text-align:center;">1/10</td>
+  <td style="text-align:center;">1/10</td>
+</tr>
+<tr>
+  <td style="text-align:left;">+ self-consistency + self-critic (max 3)</td>
+  <td style="text-align:center;"><strong>1/10</strong></td>
+  <td style="text-align:center;"><strong>5/10</strong></td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Agentic techniques are amplifiers, not substitutes for model capability.</strong>
+- mini + methods = 1/10 (same as baseline): the critic diagnoses errors correctly but mini
+  cannot translate them into fixed SQL.
+- gpt-5.4 + methods = 5/10 (+400%): the same diagnoses now produce corrected candidates.
+- LLM call count: 88 → 152 calls (+73%) for +4 correct answers — efficient.</p>
+
+<hr />
+
+<h3 id="4c-attribution-what-the-improved-no-gold-system-actually-does">4c. Attribution — what the improved no-gold system actually does</h3>
+
+<p><em>Per-candidate gold-checking shows exactly where the +4 instances came from (gpt-5.4 arms):</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Arm</th>
+  <th style="text-align:center;">Selected correct</th>
+  <th style="text-align:center;">Any correct in pool</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Baseline</td>
+  <td style="text-align:center;">1/10</td>
+  <td style="text-align:center;">2/10</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Improved (consensus + critic)</td>
+  <td style="text-align:center;"><strong>5/10</strong></td>
+  <td style="text-align:center;"><strong>5/10</strong></td>
+</tr>
+</tbody>
+</table>
+
+<ul>
+<li><strong>Self-critic <em>creates</em> correct candidates:</strong> pool grew from 2 → 5 instances with ≥1
+gold-correct candidate. It rescued <code>sf_bq011</code>, <code>sf_bq010</code>, <code>sf_bq002</code> — all cases where the
+initial generation was wrong but the repair was successful.</li>
+<li><strong>Consensus <em>captures</em> the winners:</strong> baseline left <code>sf_bq001</code> on the table (correct
+candidate existed but heuristic picked wrong). Improved selection captured it with no regressions.</li>
+<li>The two components are <strong>complementary</strong>: self-critic raises the generation ceiling;
+consensus raises the selection capture rate.</li>
+</ul>
+
+<hr />
+
+<h3 id="4d-conventional-schemas-fix-by-fix-progression-no-gold-n20-lenient-scoring">4d. Conventional schemas — fix-by-fix progression (no-gold, n=20, lenient scoring)</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Stage</th>
+  <th style="text-align:center;">Score</th>
+  <th style="text-align:center;">Δ</th>
+  <th style="text-align:left;">What was fixed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Baseline (front-end, bon=4)</td>
+  <td style="text-align:center;">8/20</td>
+  <td style="text-align:center;">—</td>
+  <td style="text-align:left;">—</td>
+</tr>
+<tr>
+  <td style="text-align:left;">+ constraint-complete plan</td>
+  <td style="text-align:center;">9/20</td>
+  <td style="text-align:center;">+1</td>
+  <td style="text-align:left;"><code>sf_bq153</code>: dropped gene filter constraint</td>
+</tr>
+<tr>
+  <td style="text-align:left;">+ 8-candidate voting</td>
+  <td style="text-align:center;">10/20</td>
+  <td style="text-align:center;">+1</td>
+  <td style="text-align:left;"><code>sf_local056</code>: selection ambiguity resolved</td>
+</tr>
+<tr>
+  <td style="text-align:left;">+ deterministic date-encoding rewrite</td>
+  <td style="text-align:center;">11/20</td>
+  <td style="text-align:center;">+1</td>
+  <td style="text-align:left;"><code>sf_bq121</code>: epoch vs YYYYMMDD</td>
+</tr>
+<tr>
+  <td style="text-align:left;">+ native-date rewrite / final bon=8</td>
+  <td style="text-align:center;"><strong>12/20</strong></td>
+  <td style="text-align:center;">+1</td>
+  <td style="text-align:left;"><code>sf_local068</code>: date cast pattern</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>8/20 → 12/20 (40% → 60%)</strong> over the project. Each fix recovers ~1 instance; they compound
+without regressing earlier gains. Diminishing returns are real and expected — the remaining 8
+failures are structural (recursive CTEs, complex multi-step logic) rather than format bugs.</p>
+
+<hr />
+
+<h3 id="4e-overall-no-gold-accuracy-gpt-54-lenient-scoring">4e. Overall no-gold accuracy (gpt-5.4, lenient scoring)</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Slice</th>
+  <th style="text-align:center;">No-gold accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Conventional schemas (n=20)</td>
+  <td style="text-align:center;"><strong>~50–60%</strong> (40→60% over project; single clean run ~55%)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Hard nested/analytics — GA360/PATENTS (n=10 hard slice)</td>
+  <td style="text-align:center;"><strong>~33%</strong> (control) → <strong>50%</strong> (improved)</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Failure taxonomy on remaining misses:</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Class</th>
+  <th style="text-align:left;">Example</th>
+  <th style="text-align:left;">Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Value/date-format misread</td>
+  <td style="text-align:left;"><code>sf_bq121</code>, <code>sf_local064</code></td>
+  <td style="text-align:left;">✅ deterministic rewrite (done)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Dropped constraint</td>
+  <td style="text-align:left;"><code>sf_bq153</code></td>
+  <td style="text-align:left;">✅ constraint-complete plan (done)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Wrong literal → empty result</td>
+  <td style="text-align:left;">GA360 product names</td>
+  <td style="text-align:left;">✅ exploration entity resolution (done)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Recursive-CTE dialect</td>
+  <td style="text-align:left;"><code>sf_local269</code></td>
+  <td style="text-align:left;">⚠️ recipe added; still hard</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Complex multi-step / domain logic</td>
+  <td style="text-align:left;"><code>sf_local309</code>, <code>sf_bq193</code></td>
+  <td style="text-align:left;">❌ architectural ceiling</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Geospatial (<code>ST_*</code>)</td>
+  <td style="text-align:left;">7 of 16 failures in 100q run</td>
+  <td style="text-align:left;">❌ compiler gap (<code>PlanGeoJoin</code> not wired)</td>
+</tr>
+</tbody>
+</table>
+
+<hr />
+
+<h3 id="4f-benchmark-validity-caveat">4f. Benchmark validity caveat</h3>
+
+<p><strong>~63% of Spider 2.0-Snow gold SQL is erroneous or ambiguous</strong> (VLDB 2026, <em>"Pervasive
+Annotation Errors"</em>). Concrete cases we hit:
+- Gold stores IDs as integers → drops leading zeros → marks correct prediction wrong
+- Column-order / column-name differences → exact-match false-negative
+- Decimal vs float representation mismatches</p>
+
+<p><strong>We use lenient any-gold scoring</strong> (<code>audit_gold_matches.py</code>): score against <em>any</em> published
+gold variant using exact value-set comparison. Strict official scoring is lower. Do not
+over-optimize to exact-match gold on small samples.</p>
+
+<hr />
+
+<hr />
+
+<h1 id="part-3-state-of-the-art">PART 3 — STATE OF THE ART</h1>
+
+<hr />
+
+<h2 id="5-apex-sql-current-academicopen-sota">5. APEX-SQL — current academic/open SOTA</h2>
+
+<p><em>Paper: "APEX-SQL: Talking to the Data via Agentic Exploration for Text-to-SQL"</em>
+<em>Authors: Bowen Cao, Weibin Liao, Yushi Sun et al. (CUHK / Peking University / Tencent Lightspeed)</em>
+<em>Venue: KDD 2026. arXiv: 2602.16720. Code: github.com/Tencent/APEX-SQL-Project</em></p>
+
+<p><strong>Core thesis:</strong> static schema representations fail to resolve semantic ambiguity in real
+enterprise databases (opaque column names, domain codes, value-format conventions). APEX-SQL
+shifts from "passive schema perception" to <strong>agentic exploration</strong> — it forms hypotheses about the
+data, verifies them by running SQL against the live database, and only then generates the answer.</p>
+
+<hr />
+
+<h3 id="stage-1-schema-linking-4-steps">Stage 1 — Schema Linking (4 steps)</h3>
+
+<p><strong>Step 1: Hypothesis Generation (Logical Planning)</strong></p>
+
+<ul>
+<li>Generates N=2 schema-<em>agnostic</em> reasoning plans (temperature 0.8): solution steps in natural
+language ("filter by X, aggregate Y over Z") with <strong>no column names at all</strong>.</li>
+<li>Aggregates to a single master plan (temperature 0.2).</li>
+<li>Purpose: decouple intent parsing from schema vocabulary. The model doesn't latch onto
+superficially similar column names when it reasons without them.</li>
+<li><em>Removing this step: −5 pp SRR on Spider 2.0-Snow (120-case pilot).</em></li>
+</ul>
+
+<p><strong>Step 2: Dual-Pathway Pruning</strong></p>
+
+<ul>
+<li>Two simultaneous LLM passes over the full column set:
+<ul>
+<li><strong>Negative pass:</strong> identify columns to <em>delete</em> (confidently irrelevant)</li>
+<li><strong>Positive pass:</strong> identify columns to <em>keep</em> (confidently needed)</li>
+</ul></li>
+<li><strong>Union logic:</strong> a column survives unless <em>both</em> passes reject it — high precision without
+sacrificing recall. Equivalent to a conservative AND of two independent pruning signals.</li>
+<li>Compresses ~3 430 columns → ~383 columns (<strong>9× reduction</strong>, ~7k tokens).</li>
+<li><em>Ablation (120-case pilot, Strict Recall Rate):</em></li>
+</ul>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Pruning configuration</th>
+  <th style="text-align:right;">SRR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;"><strong>Both passes (full)</strong></td>
+  <td style="text-align:right;"><strong>97.5%</strong></td>
+</tr>
+<tr>
+  <td style="text-align:left;">Selection pass only</td>
+  <td style="text-align:right;">93.3% (−4.2 pp)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Deletion pass only</td>
+  <td style="text-align:right;">80.8% (−16.7 pp)</td>
+</tr>
+</tbody>
+</table>
+
+<p>Baseline ReFoRCE schema linking on the same protocol: <strong>35.0% SRR</strong>.</p>
+
+<p><strong>Step 3: Parallel Data Profiling</strong></p>
+
+<ul>
+<li>Independent agents per table run role-specific exploratory SQL queries against the live database.</li>
+<li>Validates each column's <em>actual role</em>: is it a real filter key, a join key, a metric, nullable?
+Not inferred from schema text — validated against actual value distributions.</li>
+<li>Results &gt;30 rows are compressed to top-10 + aggregate statistics.</li>
+<li>Runs in parallel across tables for speed.</li>
+<li><em>Removing this step: −9.2 pp SRR.</em></li>
+</ul>
+
+<p><strong>Step 4: Global Synthesis</strong></p>
+
+<ul>
+<li>Integrates all cross-table empirical observations.</li>
+<li>Enforces <strong>topological connectivity</strong>: the output schema subgraph D* must have all join paths
+traversable. No dangling tables.</li>
+<li>Includes a <strong>Semantic Linking</strong> sub-step that hypothesises table/column roles <em>before</em> profiling,
+directing the probes toward the most relevant areas.</li>
+</ul>
+
+<p><em>Ablation on all Stage 1 verification sub-steps (120-case pilot):</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Configuration</th>
+  <th style="text-align:right;">SRR</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">With logical planning → full verification</td>
+  <td style="text-align:right;"><strong>77.5%</strong></td>
+</tr>
+<tr>
+  <td style="text-align:left;">Without logical planning</td>
+  <td style="text-align:right;">72.5% (−5.0 pp)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Without Semantic Linking</td>
+  <td style="text-align:right;">63.3% (−14.2 pp)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Without Data Profiling</td>
+  <td style="text-align:right;">68.3% (−9.2 pp)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Without Global Synthesis</td>
+  <td style="text-align:right;">73.3% (−4.2 pp)</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Without all agentic verification</strong></td>
+  <td style="text-align:right;"><strong>55.8% (−21.7 pp)</strong></td>
+</tr>
+</tbody>
+</table>
+
+<hr />
+
+<h3 id="stage-2-sql-generation-pre-processing-agentic-loop-selection">Stage 2 — SQL Generation (pre-processing + agentic loop + selection)</h3>
+
+<p><strong>Pre-processing A: Macro Plan Aggregation</strong> (<code>preprocess_macro_plans.py</code>)</p>
+
+<p>Multiple reasoning paths from Stage 1 are consolidated into a single unified master plan injected
+into the agent's initial context. Prevents the agent from starting blind or from anchoring on a
+single reasoning path.</p>
+
+<p><strong>Pre-processing B: Deterministic Guidance Retrieval</strong> (<code>preprocess_select_tips.py</code>)</p>
+
+<p>A <strong>rule engine</strong> (not embedding retrieval) maps operational keywords extracted from the master
+plan to categories in a pre-built directive library ℳ containing <strong>14 categories</strong>:</p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Category</th>
+  <th style="text-align:left;">Examples</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Evidence Enforcement</td>
+  <td style="text-align:left;">Use only the tables/columns the plan identifies</td>
+</tr>
+<tr>
+  <td style="text-align:left;">String Matching</td>
+  <td style="text-align:left;">ILIKE, LOWER(), TRIM(), exact vs. fuzzy</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Output Columns</td>
+  <td style="text-align:left;">Which columns to SELECT, naming conventions</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Table Selection</td>
+  <td style="text-align:left;">Primary table vs. lookup tables</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Column Interpretation</td>
+  <td style="text-align:left;">NULL meaning, sentinel values, units</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Schema Grounding</td>
+  <td style="text-align:left;">Use the pruned schema, not guesses</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Join Strategy</td>
+  <td style="text-align:left;">Which direction, which key, LEFT vs. INNER</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Filter Implementation</td>
+  <td style="text-align:left;">Correlated vs. independent subqueries</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Aggregation</td>
+  <td style="text-align:left;">GROUP BY, DISTINCT, window vs. aggregate</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Sorting and Limiting</td>
+  <td style="text-align:left;">NULLS LAST, ORDER BY determinism</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Multi-Step Logic</td>
+  <td style="text-align:left;">CTE decomposition, subquery layering</td>
+</tr>
+<tr>
+  <td style="text-align:left;">SQL Syntax</td>
+  <td style="text-align:left;">Snowflake dialect specifics</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Common Pitfalls</td>
+  <td style="text-align:left;">Off-by-one, date boundary, empty-set traps</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Advanced Patterns</td>
+  <td style="text-align:left;">Recursive CTE, LATERAL FLATTEN, PIVOT</td>
+</tr>
+</tbody>
+</table>
+
+<p>The keyword-to-category mapping achieves &gt;95% recall and is noise-free vs. fuzzy retrieval.</p>
+
+<p><em>Ablation — adding deterministic guidance (EX@8 metric):</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Model</th>
+  <th style="text-align:center;">With guidance</th>
+  <th style="text-align:center;">Without guidance</th>
+  <th style="text-align:center;">Δ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">GPT-4o</td>
+  <td style="text-align:center;">29.79%</td>
+  <td style="text-align:center;">26.04%</td>
+  <td style="text-align:center;"><strong>+3.75%</strong></td>
+</tr>
+<tr>
+  <td style="text-align:left;">GPT-5</td>
+  <td style="text-align:center;">47.92%</td>
+  <td style="text-align:center;">43.65%</td>
+  <td style="text-align:center;"><strong>+4.27%</strong></td>
+</tr>
+<tr>
+  <td style="text-align:left;">DeepSeek-R1</td>
+  <td style="text-align:center;">48.75%</td>
+  <td style="text-align:center;">47.50%</td>
+  <td style="text-align:center;">+1.25%</td>
+</tr>
+</tbody>
+</table>
+
+<p>Adding guidance also <em>reduces</em> the number of agentic rounds (R̄) without reducing meaningful
+query count — the agent is more directed.</p>
+
+<p><strong>Agentic Exploration Loop (max 40 actions, 56 k token budget)</strong></p>
+
+<p>SQL synthesis is force-triggered at 52 k tokens to guarantee a candidate before budget exhaustion.</p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Action</th>
+  <th style="text-align:left;">What happens</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;"><strong>PROFILING</strong></td>
+  <td style="text-align:left;">Generates exploratory SQL to probe data distributions, NULL rates, FK integrity, value ranges. Results &gt;30 rows compressed to top-10 + statistics.</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>CONSOLIDATION</strong></td>
+  <td style="text-align:left;">Periodic state compression: prunes interaction history to retain only exploratory queries + execution results + latest consolidated plan. Prevents context bloat within the 56k budget.</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>SQL SYNTHESIS</strong></td>
+  <td style="text-align:left;">Maps all accumulated evidence to physical SQL. If execution fails, re-enters the loop for targeted repair.</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>CONFIRMATION</strong></td>
+  <td style="text-align:left;">Secondary semantic verification: does the SQL logic align with user intent, accumulated observations, and the current logical plan? Finalises only when conditions pass.</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Answer Selection</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Benchmark</th>
+  <th style="text-align:left;">Selection method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Spider 2.0-Snow</td>
+  <td style="text-align:left;">Majority voting on executed results (8 samples); reward model tie-breaker</td>
+</tr>
+<tr>
+  <td style="text-align:left;">BIRD-Dev</td>
+  <td style="text-align:left;">Reward model (<code>ContextualAI/ctx-bird-reward-250121</code>) run via <code>reward.py</code></td>
+</tr>
+</tbody>
+</table>
+
+<p><code>--revote</code> flag re-runs selection on cached samples without regenerating.
+<code>--num_votes 8</code> default (configurable).</p>
+
+<hr />
+
+<h3 id="apex-sql-pipeline-diagram">APEX-SQL pipeline diagram</h3>
+
+<pre><code>NL question
+    │
+    ▼
+┌──────────────────────────── STAGE 1: Schema Linking ─────────────────────────────┐
+│                                                                                    │
+│  ① Hypothesis Generation (schema-agnostic plans, T=0.8) → merge (T=0.2)         │
+│                                                                                    │
+│  ② Dual-Pathway Pruning                                                           │
+│       negative pass (delete) ──┐                                                  │
+│                                ├──► union logic → pruned columns (9× ↓)          │
+│       positive pass (keep)  ──┘                                                   │
+│                                                                                    │
+│  ③ Parallel Data Profiling  → per-table agents run role-specific SQL probes      │
+│                                                                                    │
+│  ④ Global Synthesis  → enforce topological connectivity → final schema D*        │
+└────────────────────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────── Pre-processing ──────────────────────────────────────┐
+│  ⑤ Macro Plan Aggregation (consolidate reasoning paths)                          │
+│  ⑥ Deterministic Tip Retrieval  → rule engine → 14-category library ℳ           │
+└────────────────────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌──────────────────────────── STAGE 2: Agentic Loop ───────────────────────────────┐
+│  max 40 actions · 56k token budget · force-trigger synthesis at 52k tokens       │
+│                                                                                    │
+│   ┌─────────────────────────────────────────────────────────────────┐             │
+│   │ PROFILING → CONSOLIDATION → SQL SYNTHESIS → CONFIRMATION        │ ← loop     │
+│   └─────────────────────────────────────────────────────────────────┘             │
+└────────────────────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+Answer Selection: 8 samples → majority vote → reward model tie-breaker
+    │
+    ▼
+Final SQL
+</code></pre>
+
+<hr />
+
+<h3 id="apex-sql-benchmark-results">APEX-SQL benchmark results</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Benchmark</th>
+  <th style="text-align:right;">N</th>
+  <th style="text-align:left;">Model</th>
+  <th style="text-align:right;">EX</th>
+  <th style="text-align:right;">Pass@8</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Spider 2.0-Snow</td>
+  <td style="text-align:right;">547</td>
+  <td style="text-align:left;">DeepSeek-R1</td>
+  <td style="text-align:right;"><strong>53.03%</strong></td>
+  <td style="text-align:right;"><strong>68.44%</strong></td>
+</tr>
+<tr>
+  <td style="text-align:left;">BIRD-Dev</td>
+  <td style="text-align:right;">1 534</td>
+  <td style="text-align:left;">GPT-4o</td>
+  <td style="text-align:right;"><strong>70.7%</strong></td>
+  <td style="text-align:right;">—</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Spider 2.0-Snow schema linking</td>
+  <td style="text-align:right;">120</td>
+  <td style="text-align:left;">GPT-4.1</td>
+  <td style="text-align:right;"><strong>88.33% SRR</strong></td>
+  <td style="text-align:right;">—</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Spider 2.0-Snow (leaderboard)</td>
+  <td style="text-align:right;">547</td>
+  <td style="text-align:left;">—</td>
+  <td style="text-align:right;"><strong>~73%</strong></td>
+  <td style="text-align:right;">—</td>
+</tr>
+</tbody>
+</table>
+
+<p><em>The leaderboard 73% and the paper's 53.03% differ because the leaderboard uses a different model
+(likely a stronger frontier model) and/or a different evaluation script. The paper's 53.03% is
+the controlled research number; 73% is the current leaderboard position.</em></p>
+
+<p><strong>Exploration effect — oracle schema baseline (N=120, Spider 2.0-Snow):</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Model</th>
+  <th style="text-align:center;">With exploration EX</th>
+  <th style="text-align:center;">Without exploration EX</th>
+  <th style="text-align:center;">Δ</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">DeepSeek-V3.2</td>
+  <td style="text-align:center;">57.50%</td>
+  <td style="text-align:center;">39.17%</td>
+  <td style="text-align:center;"><strong>+18.33%</strong></td>
+</tr>
+<tr>
+  <td style="text-align:left;">GPT-4o</td>
+  <td style="text-align:center;">41.67%</td>
+  <td style="text-align:center;">36.67%</td>
+  <td style="text-align:center;">+5.00%</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Kimi-k2-instruct</td>
+  <td style="text-align:center;">48.33%</td>
+  <td style="text-align:center;">38.33%</td>
+  <td style="text-align:center;">+10.00%</td>
+</tr>
+</tbody>
+</table>
+
+<p>"Rich get richer": stronger models benefit proportionally more from exploration.</p>
+
+<p><strong>The identified bottleneck:</strong> Pass@8 = 68.44% vs. voted EX = 53.03% — <strong>15 pp lost to answer
+selection</strong>. The paper names selection as the primary next frontier.</p>
+
+<hr />
+
+<h2 id="6-other-sota-methods">6. Other SOTA methods</h2>
+
+<h3 id="divskill-sql-spider-20-lite-sota-731">DivSkill-SQL (Spider 2.0-Lite SOTA, 73.1%)</h3>
+
+<p>Attacks the weakness of naive ensembling — candidates that all fail the same way:</p>
+
+<ul>
+<li><strong>Residual Skill Optimization:</strong> builds a library of complementary "skills" (prompt + strategy
+recipes). Each <em>new</em> skill is trained on examples the current ensemble <em>still gets wrong</em>,
+explicitly maximising <strong>Pass@K</strong> (probability ≥1 of K candidates is correct).</li>
+<li>At test time, several skill-guided agents each solve the query via different interaction
+patterns; results are selected across them.</li>
+<li><em>Effect: 3× fewer hallucinated schema/function references vs. stochastic ensembling.</em></li>
+</ul>
+
+<p><strong>Why it outperforms random Best-of-N:</strong> the skills are <em>failure-targeted</em> — each new skill
+specifically covers the failures the existing ensemble leaves unsolved.</p>
+
+<hr />
+
+<h3 id="dsr-sql-dual-state-reasoning-mid-tier">DSR-SQL (Dual-State Reasoning, mid-tier)</h3>
+
+<p>Splits the problem into two states:</p>
+
+<ol>
+<li><strong>Adaptive context</strong> (schema compression): an LLM writes exploratory SQL and samples the
+schema 3× at high temperature, then merges — keeping only relevant tables/columns.</li>
+<li><p><strong>Progressive generation</strong> (4-state machine):</p>
+
+<ul>
+<li><strong>Extend</strong>: generates the next sub-question step</li>
+<li><strong>Revise</strong>: fixes the last step if execution was wrong</li>
+<li><strong>Explore</strong>: probes real data when results look suspicious</li>
+<li><strong>Rephrase</strong>: finalises the complete query</li>
+</ul>
+
+<p>Each intermediate result is <em>executed</em> before the next step — incremental verification.
+Also includes <strong>evidence extraction</strong> that compresses external documents to the few facts/
+formulas the specific question needs.</p></li>
+</ol>
+
+<hr />
+
+<h3 id="reforce-prior-academic-sota-on-snow-31-with-o1-preview">ReFoRCE (prior academic SOTA on Snow, 31% with o1-preview)</h3>
+
+<p>Four mechanisms:</p>
+
+<ol>
+<li><strong>Table compression:</strong> groups near-duplicate/date-sharded tables; prunes columns so 3 000+
+column schemas fit in context.</li>
+<li><strong>Column exploration:</strong> runs probe SQL before answering — <code>SELECT DISTINCT</code>, value samples,
+nested-field inspection — feeding real values/formats back to grounding.</li>
+<li><strong>Format restriction:</strong> derives the expected answer's column structure and types; forces
+output to match (fewer wrong-shape / wrong-column answers).</li>
+<li><strong>Self-refinement + self-consistency voting:</strong> multiple candidates, each repaired on execution
+feedback, then voted — the answer multiple independent attempts agree on wins.</li>
+</ol>
+
+<p><em>Comparison to APEX-SQL's schema linking: ReFoRCE achieves 35% SRR vs. APEX-SQL's 97.5% SRR
+on the same 120-case Spider 2.0-Snow protocol — a 62 pp gap attributable to APEX-SQL's
+hypothesis-driven dual-pathway pruning and data-profiling verification.</em></p>
+
+<hr />
+
+<h2 id="7-databricks-genie-commercial-architecture">7. Databricks Genie — commercial architecture</h2>
+
+<p><strong>Product:</strong> AI/BI Genie — conversational NL-to-SQL, part of the Databricks Data Intelligence
+Platform. GA: June 2025. 4 000+ customers in preview.
+<strong>No public Spider 2.0 / BIRD benchmark numbers published.</strong></p>
+
+<p><strong>Fundamental design philosophy:</strong> the <em>opposite</em> of APEX-SQL. Instead of runtime schema
+exploration, Genie invests <strong>up-front expert curation</strong> to narrow the LLM's task. Domain experts
+build a Genie Space; at query time the LLM selects from pre-verified patterns rather than
+reasoning over the full schema from scratch.</p>
+
+<h3 id="the-genie-space-configuration-unit">The Genie Space — configuration unit</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Resource</th>
+  <th style="text-align:center;">Hard limit</th>
+  <th style="text-align:left;">Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Tables / views</td>
+  <td style="text-align:center;"><strong>30</strong></td>
+  <td style="text-align:left;">Unity Catalog tables scoped to this domain</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Knowledge store snippets</td>
+  <td style="text-align:center;"><strong>200</strong></td>
+  <td style="text-align:left;">Column descriptions, SQL expressions (KPIs, filters, row transforms), join definitions, synonyms</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Instructions</td>
+  <td style="text-align:center;"><strong>100</strong></td>
+  <td style="text-align:left;">Parameterized example SQL + general text rules (effective up to ~20 lines)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Entity matching</td>
+  <td style="text-align:center;"><strong>120 columns, 1 024 values each</strong></td>
+  <td style="text-align:left;">Pre-sampled distinct-value lists for categoricals</td>
+</tr>
+</tbody>
+</table>
+
+<h3 id="5-layer-schema-linking">5-layer schema linking</h3>
+
+<ol>
+<li><strong>Unity Catalog metadata</strong> (always active): schema, types, PK/FK, column descriptions.</li>
+<li><strong>Intelligent filtering</strong> (mechanism not disclosed — likely BM25/embedding): selects relevant
+columns and example SQL from the Space at query time.</li>
+<li><strong>Entity matching</strong>: pre-sampled distinct-value lists. Resolves <em>"Florida"</em> → <code>WHERE state = 'FL'</code>;
+<em>"first level support"</em> → exact DB code. Filters appear as dropdowns in the UI.</li>
+<li><strong>Join relationships</strong>: explicit definitions in the knowledge store; auto-suggested from FK metadata.</li>
+<li><strong>Genie Ontology</strong> (workspace-wide): automatic semantic map built from tables, dashboards,
+notebooks, and connected external docs (Google Drive, SharePoint via MCP).</li>
+</ol>
+
+<h3 id="llm-backbone-compound-ai-with-model-rotation">LLM backbone — compound AI with model rotation</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Mode</th>
+  <th style="text-align:left;">Primary model</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Standard Genie Spaces</td>
+  <td style="text-align:left;"><strong>Azure OpenAI</strong> (primary); Anthropic Claude (opt-in)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Agent Mode / Research Agent</td>
+  <td style="text-align:left;"><strong>Anthropic Claude Sonnet</strong> (explicitly documented)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Partner AI disabled</td>
+  <td style="text-align:left;">Databricks-hosted open-weight fallback</td>
+</tr>
+</tbody>
+</table>
+
+<p>Databricks rotates models without disclosure; two upgrades documented (Nov 2024, Sep 2025).</p>
+
+<h3 id="agentic-evolution">Agentic evolution</h3>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Date</th>
+  <th style="text-align:left;">Capability added</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Feb 2025</td>
+  <td style="text-align:left;">Chain-of-Thought reasoning in text-to-SQL model</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Sep 2025</td>
+  <td style="text-align:left;"><strong>Self-reflection</strong> — checks own SQL before execution</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Nov 2025</td>
+  <td style="text-align:left;">Research Agent (Agent Mode) — single unified reasoning agent; uses Claude Sonnet</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Dec 2025</td>
+  <td style="text-align:left;">Semantic ambiguity detection — asks clarifying questions</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Apr 2026</td>
+  <td style="text-align:left;">Agent Mode public preview (UI only; not exposed via API)</td>
+</tr>
+</tbody>
+</table>
+
+<h3 id="trusted-assets-the-key-structural-differentiator">Trusted Assets — the key structural differentiator</h3>
+
+<ul>
+<li><strong>Parameterized example SQL:</strong> if user question matches a trusted asset's NL question, Genie
+runs the verified SQL directly (parameter-substituted), <strong>bypassing LLM generation entirely</strong>.
+Response is flagged "Trusted."</li>
+<li><strong>SQL UDFs (Unity Catalog):</strong> exact function logic executes, always "Trusted."</li>
+<li>For high-frequency or high-stakes queries, the LLM is completely eliminated from the path.</li>
+</ul>
+
+<h3 id="key-tradeoff">Key tradeoff</h3>
+
+<p>Genie trades <em>setup cost</em> (expert curation of knowledge stores, entity lists, trusted assets)
+for <em>runtime reliability and governance</em>. APEX-SQL and ReFoRCE do zero setup and explore
+at runtime; Genie offloads that cost to up-front domain investment.</p>
+
+<hr />
+
+<h2 id="8-sota-ranked-spider-20-snow-execution-accuracy">8. SOTA ranked (Spider 2.0-Snow execution accuracy)</h2>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:right;">#</th>
+  <th style="text-align:left;">System</th>
+  <th style="text-align:right;">Snow EX</th>
+  <th style="text-align:center;">Open?</th>
+  <th style="text-align:left;">Key technique</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:right;">1</td>
+  <td style="text-align:left;">Genloop Sentinel Agent v2 Pro</td>
+  <td style="text-align:right;"><strong>96.7%</strong></td>
+  <td style="text-align:center;">✗</td>
+  <td style="text-align:left;">Frontier model + heavy multi-agent ensemble</td>
+</tr>
+<tr>
+  <td style="text-align:right;">2</td>
+  <td style="text-align:left;">Native (usenative.ai)</td>
+  <td style="text-align:right;">96.5%</td>
+  <td style="text-align:center;">✗</td>
+  <td style="text-align:left;">Proprietary agent</td>
+</tr>
+<tr>
+  <td style="text-align:right;">3</td>
+  <td style="text-align:left;">QUVI-3 + Gemini-3-pro</td>
+  <td style="text-align:right;">94.2%</td>
+  <td style="text-align:center;">✗</td>
+  <td style="text-align:left;">Frontier model + agent</td>
+</tr>
+<tr>
+  <td style="text-align:right;">4</td>
+  <td style="text-align:left;">Tencent TCDataAgent</td>
+  <td style="text-align:right;">94.0%</td>
+  <td style="text-align:center;">✗</td>
+  <td style="text-align:left;">Contextual-scaling agent</td>
+</tr>
+<tr>
+  <td style="text-align:right;">5</td>
+  <td style="text-align:left;">Paytm Prism</td>
+  <td style="text-align:right;">90.5%</td>
+  <td style="text-align:center;">~</td>
+  <td style="text-align:left;">Multi-agent consensus/debate</td>
+</tr>
+<tr>
+  <td style="text-align:right;">6</td>
+  <td style="text-align:left;"><strong>APEX-SQL</strong></td>
+  <td style="text-align:right;"><strong>~73%</strong></td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:left;">Hypothesis→verify→refine + data profiling</td>
+</tr>
+<tr>
+  <td style="text-align:right;">—</td>
+  <td style="text-align:left;"><strong>Ours</strong></td>
+  <td style="text-align:right;"><strong>~50–60%¹</strong></td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:left;">Exploration + Best-of-N + deterministic format fixes</td>
+</tr>
+<tr>
+  <td style="text-align:right;">7</td>
+  <td style="text-align:left;">ReFoRCE (o3)</td>
+  <td style="text-align:right;">~63%</td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:left;">Column exploration + self-consistency (strong model)</td>
+</tr>
+<tr>
+  <td style="text-align:right;">8</td>
+  <td style="text-align:left;">ReFoRCE (o1-preview)</td>
+  <td style="text-align:right;">31%</td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:left;">Column exploration + self-consistency (original)</td>
+</tr>
+<tr>
+  <td style="text-align:right;">9</td>
+  <td style="text-align:left;">Spider-Agent</td>
+  <td style="text-align:right;">low</td>
+  <td style="text-align:center;">✅</td>
+  <td style="text-align:left;">Sandboxed execution agent, no ensembling</td>
+</tr>
+<tr>
+  <td style="text-align:right;">—</td>
+  <td style="text-align:left;">Databricks Genie</td>
+  <td style="text-align:right;">not published</td>
+  <td style="text-align:center;">✗</td>
+  <td style="text-align:left;">Curated RAG + trusted assets</td>
+</tr>
+</tbody>
+</table>
+
+<p>¹ <em>Not directly comparable: our number is on a curated conventional subset with lenient scoring.
+Full-benchmark official scoring would be lower.</em></p>
+
+<p><strong>Lite track (for reference):</strong> DivSkill-SQL <strong>73.1%</strong> (#1), SOMA-SQL 72.0%, DecisionX 71.8%.</p>
+
+<hr />
+
+<h2 id="9-three-way-comparison-our-system-vs-apex-sql-vs-databricks-genie">9. Three-way comparison: our system vs. APEX-SQL vs. Databricks Genie</h2>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Dimension</th>
+  <th style="text-align:left;"><strong>Our system</strong></th>
+  <th style="text-align:left;"><strong>APEX-SQL</strong> (KDD 2026)</th>
+  <th style="text-align:left;"><strong>Databricks Genie</strong></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;"><strong>Design</strong></td>
+  <td style="text-align:left;">Dynamic RAG + deterministic compiler</td>
+  <td style="text-align:left;">Agentic hypothesis-verify</td>
+  <td style="text-align:left;">Curated RAG + trusted assets</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Schema scope</strong></td>
+  <td style="text-align:left;">Full DB via vector/BM25 + SchemaSlice</td>
+  <td style="text-align:left;">Full DB; runtime agent exploration</td>
+  <td style="text-align:left;">Hard limit: <strong>30 tables</strong> per Space</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Schema linking</strong></td>
+  <td style="text-align:left;">Hybrid retrieval (BM25 + embedding, RRF k=60) + SchemaSlice</td>
+  <td style="text-align:left;">4-stage: hypothesis → dual-path pruning → parallel profiling → synthesis</td>
+  <td style="text-align:left;">5-layer: UC metadata + filtering + entity matching + join defs + Ontology</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>SQL generation</strong></td>
+  <td style="text-align:left;">Plan → SQL compiler (LLM owns intent, compiler owns syntax)</td>
+  <td style="text-align:left;">4-action agentic loop, 56k token budget</td>
+  <td style="text-align:left;">CoT + self-reflection; trusted assets bypass generation entirely</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Self-correction</strong></td>
+  <td style="text-align:left;">Category-classified repair (8 Snowflake error categories)</td>
+  <td style="text-align:left;">SYNTHESIS re-enters loop on error</td>
+  <td style="text-align:left;">Self-reflection pre-execution + "Ask for Review"</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Best-of-N / voting</strong></td>
+  <td style="text-align:left;">Best-of-N with 6 structural strategies; multi-signal selector</td>
+  <td style="text-align:left;">8 samples; majority vote + reward model</td>
+  <td style="text-align:left;">Not disclosed</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Large schema handling</strong></td>
+  <td style="text-align:left;">Partition collapsing (366 GA360 tables → 1 card); VARIANT enrichment</td>
+  <td style="text-align:left;">9× column compression; 40-action budget caps runtime</td>
+  <td style="text-align:left;">Forces 30-table scope; multiple Spaces for large orgs</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Domain adaptation</strong></td>
+  <td style="text-align:left;">Index rebuild on schema change</td>
+  <td style="text-align:left;">Pre-processing runs + curated tip library ℳ</td>
+  <td style="text-align:left;">High up-front curation</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Governance</strong></td>
+  <td style="text-align:left;">None (research)</td>
+  <td style="text-align:left;">None (research)</td>
+  <td style="text-align:left;">Unity Catalog; per-user permissions; read-only SQL</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>LLM</strong></td>
+  <td style="text-align:left;">Provider-neutral; <code>gpt-5.4-mini</code> today</td>
+  <td style="text-align:left;">Any OAI-compatible; best: DeepSeek-R1</td>
+  <td style="text-align:left;">Azure OpenAI standard; Claude Sonnet for Agent Mode</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Spider 2.0-Snow EX</strong></td>
+  <td style="text-align:left;">~50–60% (subset, lenient)¹</td>
+  <td style="text-align:left;"><strong>53.03%</strong> (paper) / <strong>73%</strong> (leaderboard)</td>
+  <td style="text-align:left;">Not published</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Cost / correct answer</strong></td>
+  <td style="text-align:left;"><strong>$0.022–$0.11</strong> (measured)</td>
+  <td style="text-align:left;">Not reported</td>
+  <td style="text-align:left;">Not reported</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Code</strong></td>
+  <td style="text-align:left;">This repo</td>
+  <td style="text-align:left;">github.com/Tencent/APEX-SQL-Project</td>
+  <td style="text-align:left;">Closed source</td>
+</tr>
+</tbody>
+</table>
+
+<hr />
+
+<h2 id="10-where-we-stand-and-what-closing-the-gap-requires">10. Where we stand and what closing the gap requires</h2>
+
+<p><strong>The gap to APEX-SQL is architectural, not tuning.</strong></p>
+
+<p>APEX-SQL's advantage on Spider 2.0-Snow comes from data-grounded exploration during schema
+linking — its 97.5% SRR vs our retrieval-based approach on the same schemas. Our Best-of-N
++ deterministic compiler is effective on conventional schemas but doesn't resolve the fundamental
+"which column actually means what" ambiguity in enterprise DBs.</p>
+
+<p><strong>Specific gaps and what fills them:</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Gap</th>
+  <th style="text-align:left;">What APEX-SQL does</th>
+  <th style="text-align:left;">Our path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Schema ambiguity resolution</td>
+  <td style="text-align:left;">Parallel data profiling — runs SQL to validate column roles</td>
+  <td style="text-align:left;">Wire exploration front-end into schema-linking stage (currently post-linking)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Large column space</td>
+  <td style="text-align:left;">Dual-pathway pruning (9× compression, 97.5% SRR)</td>
+  <td style="text-align:left;">SchemaSlice is partial; add hypothesis-driven filtering</td>
+</tr>
+<tr>
+  <td style="text-align:left;">SQL format correctness</td>
+  <td style="text-align:left;">14-category deterministic tip library</td>
+  <td style="text-align:left;">Plan→SQL compiler already addresses this; extend to geo</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Answer selection</td>
+  <td style="text-align:left;">Reward model + 8 candidates</td>
+  <td style="text-align:left;">Learned verifier (training code exists; not trained yet)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Geospatial queries</td>
+  <td style="text-align:left;">Not specialised for geo</td>
+  <td style="text-align:left;"><code>PlanGeoJoin</code>/<code>PlanGeoFilter</code> compiler extension</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Common winning ingredients across all leading systems:</strong>
+1. <strong>Strong base model</strong> — gates everything (slide 8: gpt-5.4-mini = no gain, gpt-5.4 = +400%)
+2. <strong>Ground in real data</strong> — exploration / parallel profiling (APEX stage 1, ReFoRCE exploration, our front-end)
+3. <strong>Many diverse candidates + smart selection</strong> (our Best-of-N −80 pp; APEX Pass@8 gap −15 pp)
+4. <strong>Iterative verify-and-refine</strong> with execution feedback
+5. <strong>Schema linking / pruning / compression</strong> for 3 000+ column schemas
+6. <strong>Dialect discipline</strong> — deterministic enforcement, not soft prompting</p>
+
+<p><em>Our ablation confirms #3 is dominant. Our contribution is #2 (value/format grounding) and #6
+(deterministic compiler). The leaders' edge is primarily #4 (full hypothesis-verify loops) and
+heavier #3.</em></p>
+
+</main>
+
+</body>
+</html>
