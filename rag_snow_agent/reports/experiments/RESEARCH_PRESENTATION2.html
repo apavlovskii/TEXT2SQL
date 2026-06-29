@@ -26,7 +26,6 @@
     line-height: 1.7;
     font-size: 15px;
   }
-  /* ── Layout ── */
   .sidebar {
     position: fixed; top: 0; left: 0; width: 260px; height: 100vh;
     background: var(--surface); border-right: 1px solid var(--border);
@@ -47,10 +46,7 @@
     padding: 14px 20px 4px; font-size: 11px; font-weight: 700;
     letter-spacing: .1em; text-transform: uppercase; color: var(--accent3);
   }
-  main {
-    margin-left: 260px; padding: 48px 56px; max-width: 1100px;
-  }
-  /* ── Typography ── */
+  main { margin-left: 260px; padding: 48px 56px; max-width: 1100px; }
   h1 { font-size: 2rem; font-weight: 800; color: var(--accent); margin: 0 0 8px; line-height: 1.2; }
   h2 { font-size: 1.35rem; font-weight: 700; color: var(--accent); margin: 48px 0 16px;
        padding-bottom: 8px; border-bottom: 1px solid var(--border); }
@@ -61,14 +57,6 @@
   strong { color: #fff; font-weight: 600; }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
-  /* Part headers */
-  h1[id^="part"] {
-    font-size: 1.1rem; font-weight: 800; letter-spacing: .1em;
-    text-transform: uppercase; color: var(--accent3); background: var(--surface2);
-    padding: 12px 20px; border-radius: 8px; border-left: 4px solid var(--accent3);
-    margin: 56px 0 8px;
-  }
-  /* ── Tables ── */
   table { width: 100%; border-collapse: collapse; margin: 20px 0 24px; font-size: 13.5px; }
   thead tr { background: var(--surface2); }
   th { padding: 10px 14px; text-align: left; font-weight: 600; color: var(--accent);
@@ -76,41 +64,31 @@
   td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
   tr:nth-child(even) { background: rgba(255,255,255,.02); }
   tr:hover { background: var(--surface2); }
-  /* ── Code ── */
   code { background: var(--code-bg); color: #a5f3fc; padding: 2px 6px;
           border-radius: 4px; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: .85em; }
   pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px;
          padding: 20px 24px; overflow-x: auto; margin: 16px 0 24px; }
   pre code { background: none; padding: 0; font-size: .82em; color: #c8d3f5; line-height: 1.6; }
-  /* ── Lists ── */
   ul, ol { margin: 8px 0 14px 24px; }
   li { margin-bottom: 5px; }
-  /* ── Blockquotes / callouts ── */
   blockquote {
     border-left: 4px solid var(--accent); background: var(--surface2);
-    padding: 14px 20px; margin: 16px 0; border-radius: 0 8px 8px 0;
-    color: var(--text);
+    padding: 14px 20px; margin: 16px 0; border-radius: 0 8px 8px 0; color: var(--text);
   }
   blockquote p { margin: 0; }
-  /* ── HR / separators ── */
   hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
-  /* ── Part banners ── */
-  .part-banner {
-    background: linear-gradient(135deg, var(--surface2), #1e2235);
-    border: 1px solid var(--accent3); border-radius: 10px;
-    padding: 20px 28px; margin: 48px 0 32px;
+  /* Part banners (h1 inside the doc body = PART headers) */
+  main h1:not(:first-child) {
+    font-size: 1.1rem; font-weight: 800; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--accent3);
+    background: var(--surface2); padding: 14px 22px; border-radius: 8px;
+    border-left: 4px solid var(--accent3); margin: 60px 0 8px;
   }
-  .part-banner h1 {
-    font-size: 1.2rem; color: var(--accent3); margin: 0 0 4px;
-    background: none; border: none; padding: 0;
+  /* warning callout for the retrieval gap note */
+  .retrieval-gap {
+    background: rgba(248,113,113,.08); border-left: 4px solid var(--danger);
+    padding: 14px 20px; margin: 16px 0; border-radius: 0 8px 8px 0;
   }
-  .part-banner p { margin: 0; color: var(--muted); font-size: .9rem; }
-  /* ── Intro block ── */
-  .intro { background: var(--surface); border-radius: 10px; padding: 24px 32px; margin-bottom: 40px;
-            border: 1px solid var(--border); }
-  .intro h1 { font-size: 1.6rem; }
-  .intro p { color: var(--muted); margin: 6px 0 0; }
-  /* ── Responsive ── */
   @media (max-width: 900px) {
     .sidebar { display: none; }
     main { margin-left: 0; padding: 24px 20px; }
@@ -129,11 +107,11 @@
     <a href="#layer-3----best-of-n-with-structural-strategy-diversification">Layer 3: Best-of-N</a>
     <a href="#layer-4----self-correction-repair-loop">Layer 4: Repair Loop</a>
     <a href="#layer-5----verification-fingerprint--metamorphic">Layer 5: Verification</a>
-    <a href="#gold-fed-ablation----which-components-drive-accuracy">Ablation Results</a>
-    <a href="#2a-component-ablation-n--30-gpt-54-mini-best-of-n--4-max_repairs--3">Component Ablation n=30</a>
-    <a href="#2b-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n--4">25-Query Sweep</a>
-    <a href="#2c-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">N Scaling Curve</a>
-    <a href="#2d-100-query-benchmark----gold-fed-ceiling-at-scale">100-Query Benchmark</a>
+    <a href="#gold-fed-results">Gold-Fed Results</a>
+    <a href="#2a-headline----100-query-benchmark-best-of-n--8-three-independent-runs">100-Query Headline</a>
+    <a href="#2b-component-ablation-n--30-gpt-54-mini-best-of-n--4-max_repairs--3">Component Ablation n=30</a>
+    <a href="#2c-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n--4">25-Query Cost Sweep</a>
+    <a href="#2d-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">N Scaling Curve</a>
     <a href="#2e-interpreting-the-gold-fed-number----what-it-means-and-doesnt">Interpreting Gold</a>
     <div class="part-header">Part 2 — No-Gold</div>
     <a href="#what-changed-the-no-gold-architecture">Architecture Changes</a>
@@ -237,6 +215,16 @@ retrieved set further:
 - 1-hop join-graph expansion: add tables reachable via one FK hop from any retained table
 - VARIANT enrichment: inject <code>SnowflakeSyntax</code> cards for tables with nested JSON/ARRAY columns</p>
 
+<p><strong>Retrieval recall — honest gap:</strong> we have not computed a direct schema-linking recall metric
+(no ground-truth table/column sets for the Spider 2.0-Snow queries). The only proxy we have is
+the schema indexing coverage result (§3f): 5/36 queries execute when the DB is <em>not</em> indexed
+vs 19/20 when it is — which measures coverage, not column-level recall quality. Two known failure
+classes attributable to retrieval: (1) <code>CENSUS_BUREAU_ACS_2</code> (296 tables — retrieval noise
+causes rank dilution on broad schemas); (2) <code>GEO_OPENSTREETMAP</code> spatial tables missing from
+retrieval when non-spatial cards crowd out the top-K. For comparison: APEX-SQL measures schema
+linking on the same benchmark at <strong>88.33% Strict Recall Rate</strong> (correct table+column sets in
+top results, N=120 pilot). We do not have an equivalent number.</p>
+
 <hr />
 
 <h3 id="layer-2-plan-sql-compiler-deterministic">Layer 2 — Plan → SQL compiler (deterministic)</h3>
@@ -316,11 +304,146 @@ targeted at failure modes that appear in larger or more diverse query sets.</p>
 
 <hr />
 
-<h2 id="2-gold-fed-ablation-which-components-drive-accuracy">2. Gold-fed ablation — which components drive accuracy</h2>
+<h2 id="2-gold-fed-results">2. Gold-fed results</h2>
 
-<h3 id="2a-component-ablation-n-30-gpt-54-mini-best-of-n-4-max_repairs-3">2a. Component ablation (n = 30, gpt-5.4-mini, Best-of-N = 4, max_repairs = 3)</h3>
+<h3 id="2a-headline-100-query-benchmark-best-of-n-8-three-independent-runs">2a. Headline — 100-query benchmark (Best-of-N = 8, three independent runs)</h3>
 
-<p><em>Paired leave-one-out: each arm removes one component; all others held fixed. Gold-fed throughout.</em></p>
+<p><em>The primary gold-fed result: the full system run across <strong>100 representative Spider 2.0-Snow
+instances</strong> (broader than the ablation slice — includes geospatial databases), replicated three
+times to estimate variance. Model: gpt-5.4-mini. Best-of-N = 8, max_repairs = 4.</em></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Run</th>
+  <th style="text-align:right;">Accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">benchmark<em>run</em>10</td>
+  <td style="text-align:right;">87% (87/100)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">benchmark<em>run</em>11</td>
+  <td style="text-align:right;">81% (81/100)</td>
+</tr>
+<tr>
+  <td style="text-align:left;">benchmark<em>run</em>12</td>
+  <td style="text-align:right;">84% (84/100)</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><strong>Mean</strong></td>
+  <td style="text-align:right;"><strong>84%</strong> (range 81–87%)</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>The gold-assisted full system solves ~84% of a representative 100-query Snow set.</strong>
+Run-to-run variance ±3 pp is real: the ±3 pp band is not noise — it reflects a genuine 14-query
+flaky core that sometimes succeeds, sometimes doesn't (stochastic sampling at temperature 0.2).</p>
+
+<p><strong>Per-instance stability:</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Outcome</th>
+  <th style="text-align:right;">Count</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">Always correct (3/3 runs)</td>
+  <td style="text-align:right;">76</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Flaky (1–2 of 3 runs)</td>
+  <td style="text-align:right;">14</td>
+</tr>
+<tr>
+  <td style="text-align:left;">Never correct (0/3 runs)</td>
+  <td style="text-align:right;">10</td>
+</tr>
+</tbody>
+</table>
+
+<p>Reliable solved core: <strong>76%</strong>. Hard unsolvable core: <strong>10%</strong>. The honest "reliable capability"
+is 76%; the best-case is 87%; the mean ceiling is 84%.</p>
+
+<p><strong>Domain breakdown (majority of 3 runs):</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Database</th>
+  <th style="text-align:center;">Solved</th>
+  <th style="text-align:left;"></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">GITHUB_REPOS</td>
+  <td style="text-align:center;">15/15</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">NOAA_DATA</td>
+  <td style="text-align:center;">12/12</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">PATENTS</td>
+  <td style="text-align:center;">14/15</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">GA360</td>
+  <td style="text-align:center;">10/12</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">CMS_DATA</td>
+  <td style="text-align:center;">7/7</td>
+  <td style="text-align:left;">✅</td>
+</tr>
+<tr>
+  <td style="text-align:left;">CENSUS<em>BUREAU</em>ACS_2</td>
+  <td style="text-align:center;">2/4</td>
+  <td style="text-align:left;">⚠️ retrieval noise on 296-table schema</td>
+</tr>
+<tr>
+  <td style="text-align:left;">GEO_OPENSTREETMAP</td>
+  <td style="text-align:center;">3/6</td>
+  <td style="text-align:left;">❌</td>
+</tr>
+<tr>
+  <td style="text-align:left;">NEW<em>YORK</em>NOAA</td>
+  <td style="text-align:center;">1/3</td>
+  <td style="text-align:left;">❌</td>
+</tr>
+<tr>
+  <td style="text-align:left;">NEW<em>YORK</em>CITIBIKE_1</td>
+  <td style="text-align:center;">1/3</td>
+  <td style="text-align:left;">❌</td>
+</tr>
+</tbody>
+</table>
+
+<p>Geospatial (<code>ST_*</code> / distance predicates) is the dominant weak domain. Conventional analytics
+(patents, GitHub, weather, GA360, healthcare) are handled well at Best-of-N = 8.</p>
+
+<p><strong>Connection to ablation:</strong> the 30-query component ablation showed Best-of-N is the dominant
+component (+80 pp). This 100-query run is that recipe at its strong setting (N=8 + 4 repairs),
+confirming the finding scales: the same architecture that scores 90% on the easier 30-query
+non-geo slice scores 84% on the harder geo-inclusive 100-query set.</p>
+
+<hr />
+
+<h3 id="2b-component-ablation-n-30-gpt-54-mini-best-of-n-4-max_repairs-3">2b. Component ablation (n = 30, gpt-5.4-mini, Best-of-N = 4, max_repairs = 3)</h3>
+
+<p><em>Paired leave-one-out: each arm removes one component; all others held fixed. Gold-fed throughout.
+This identifies which components drive the 84–90% ceiling.</em></p>
 
 <table>
 <thead>
@@ -439,14 +562,14 @@ targeted at failure modes that appear in larger or more diverse query sets.</p>
 - Best-of-N uses <strong>4× tokens</strong> for <strong>+80 pp accuracy</strong> — unambiguously worth it.
 - Repair loop costs <strong>~2× tokens</strong> for <strong>+16.7 pp</strong> — real but the CI floor touches 0.
 - Knowledge components (semantic, sample-records, verifier, verification) show <strong>no statistically
-  reliable gain at n=30</strong> — not proven useless (n=30 cannot detect true +5–10 pp effects), but
-  require validation at larger N before further investment.</p>
+  reliable gain at n=30</strong> — not proven useless (true +5–10 pp effects are invisible at n=30),
+  but require validation at larger N before further investment.</p>
 
 <hr />
 
-<h3 id="2b-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n-4">2b. 25-query sweep with cost tracking (gpt-5.4-mini, Best-of-N = 4)</h3>
+<h3 id="2c-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n-4">2c. 25-query sweep with cost tracking (gpt-5.4-mini, Best-of-N = 4)</h3>
 
-<p><em>Full 8-cell leave-one-out with token and cost telemetry. Reference: A0_full = 80% at bon=4.</em></p>
+<p><em>Full 8-cell leave-one-out with token and dollar-cost telemetry. Reference: A0_full.</em></p>
 
 <table>
 <thead>
@@ -597,7 +720,7 @@ targeted at failure modes that appear in larger or more diverse query sets.</p>
 
 <hr />
 
-<h3 id="2c-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">2c. Best-of-N scaling curve (same 25 instances, gpt-5.4-mini)</h3>
+<h3 id="2d-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">2d. Best-of-N scaling curve (same 25 instances, gpt-5.4-mini)</h3>
 
 <table>
 <thead>
@@ -637,130 +760,10 @@ targeted at failure modes that appear in larger or more diverse query sets.</p>
 <p>The scaling is <strong>monotonic and large</strong>: every doubling of N adds 64 pp then 20 pp. The 5 failures
 at N=4 decompose as: 1 unreachable (needed strategy index ≥ 5), 4 lost to sampling variance
 at the winning strategy (existed at N=4 but wasn't drawn). The architecture's measured ceiling on
-this slice is <strong>100% at N=8</strong>.</p>
+this 25-query slice is <strong>100% at N=8</strong>.</p>
 
-<hr />
-
-<h3 id="2d-100-query-benchmark-gold-fed-ceiling-at-scale">2d. 100-query benchmark — gold-fed ceiling at scale</h3>
-
-<p><em>Best-of-N = 8, max_repairs = 4, three independent runs across a broader 100-query set that
-includes geospatial databases.</em></p>
-
-<table>
-<thead>
-<tr>
-  <th style="text-align:left;">Run</th>
-  <th style="text-align:right;">Accuracy</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td style="text-align:left;">benchmark<em>run</em>10</td>
-  <td style="text-align:right;">87% (87/100)</td>
-</tr>
-<tr>
-  <td style="text-align:left;">benchmark<em>run</em>11</td>
-  <td style="text-align:right;">81% (81/100)</td>
-</tr>
-<tr>
-  <td style="text-align:left;">benchmark<em>run</em>12</td>
-  <td style="text-align:right;">84% (84/100)</td>
-</tr>
-<tr>
-  <td style="text-align:left;"><strong>Mean</strong></td>
-  <td style="text-align:right;"><strong>84%</strong> (range 81–87%)</td>
-</tr>
-</tbody>
-</table>
-
-<p><strong>Stability breakdown:</strong></p>
-
-<table>
-<thead>
-<tr>
-  <th style="text-align:left;">Outcome</th>
-  <th style="text-align:right;">Count</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td style="text-align:left;">Always correct (3/3 runs)</td>
-  <td style="text-align:right;">76</td>
-</tr>
-<tr>
-  <td style="text-align:left;">Flaky (1–2 of 3 runs)</td>
-  <td style="text-align:right;">14</td>
-</tr>
-<tr>
-  <td style="text-align:left;">Never correct (0/3 runs)</td>
-  <td style="text-align:right;">10</td>
-</tr>
-</tbody>
-</table>
-
-<p>Reliable solved core: <strong>76%</strong>. Hard unsolvable core: <strong>10%</strong>. The ±3 pp run variance is the
-flaky band — questions the architecture sometimes gets, sometimes doesn't.</p>
-
-<p><strong>Domain breakdown:</strong></p>
-
-<table>
-<thead>
-<tr>
-  <th style="text-align:left;">Database</th>
-  <th style="text-align:center;">Solved (majority of 3 runs)</th>
-  <th style="text-align:left;"></th>
-</tr>
-</thead>
-<tbody>
-<tr>
-  <td style="text-align:left;">GITHUB_REPOS</td>
-  <td style="text-align:center;">15/15</td>
-  <td style="text-align:left;">✅</td>
-</tr>
-<tr>
-  <td style="text-align:left;">NOAA_DATA</td>
-  <td style="text-align:center;">12/12</td>
-  <td style="text-align:left;">✅</td>
-</tr>
-<tr>
-  <td style="text-align:left;">PATENTS</td>
-  <td style="text-align:center;">14/15</td>
-  <td style="text-align:left;">✅</td>
-</tr>
-<tr>
-  <td style="text-align:left;">GA360</td>
-  <td style="text-align:center;">10/12</td>
-  <td style="text-align:left;">✅</td>
-</tr>
-<tr>
-  <td style="text-align:left;">CMS_DATA</td>
-  <td style="text-align:center;">7/7</td>
-  <td style="text-align:left;">✅</td>
-</tr>
-<tr>
-  <td style="text-align:left;">CENSUS<em>BUREAU</em>ACS_2</td>
-  <td style="text-align:center;">2/4</td>
-  <td style="text-align:left;">⚠️</td>
-</tr>
-<tr>
-  <td style="text-align:left;">GEO_OPENSTREETMAP</td>
-  <td style="text-align:center;">3/6</td>
-  <td style="text-align:left;">❌</td>
-</tr>
-<tr>
-  <td style="text-align:left;">NEW<em>YORK</em>NOAA</td>
-  <td style="text-align:center;">1/3</td>
-  <td style="text-align:left;">❌</td>
-</tr>
-<tr>
-  <td style="text-align:left;">NEW<em>YORK</em>CITIBIKE_1</td>
-  <td style="text-align:center;">1/3</td>
-  <td style="text-align:left;">❌</td>
-</tr>
-</tbody>
-</table>
-
-<p>Geospatial (<code>ST_*</code> / distance predicates) is the dominant weak domain.</p>
+<p>Note: the 25-query slice is non-geo only; the 100-query run (§2a) with N=8 hits 84% on the harder
+geo-inclusive set. The ceiling is query-class dependent, not a universal 100%.</p>
 
 <hr />
 

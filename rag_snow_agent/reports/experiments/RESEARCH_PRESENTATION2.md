@@ -47,6 +47,16 @@ retrieved set further:
 - 1-hop join-graph expansion: add tables reachable via one FK hop from any retained table
 - VARIANT enrichment: inject `SnowflakeSyntax` cards for tables with nested JSON/ARRAY columns
 
+**Retrieval recall — honest gap:** we have not computed a direct schema-linking recall metric
+(no ground-truth table/column sets for the Spider 2.0-Snow queries). The only proxy we have is
+the schema indexing coverage result (§3f): 5/36 queries execute when the DB is *not* indexed
+vs 19/20 when it is — which measures coverage, not column-level recall quality. Two known failure
+classes attributable to retrieval: (1) `CENSUS_BUREAU_ACS_2` (296 tables — retrieval noise
+causes rank dilution on broad schemas); (2) `GEO_OPENSTREETMAP` spatial tables missing from
+retrieval when non-spatial cards crowd out the top-K. For comparison: APEX-SQL measures schema
+linking on the same benchmark at **88.33% Strict Recall Rate** (correct table+column sets in
+top results, N=120 pilot). We do not have an equivalent number.
+
 ---
 
 ### Layer 2 — Plan → SQL compiler (deterministic)
@@ -124,11 +134,64 @@ targeted at failure modes that appear in larger or more diverse query sets.
 
 ---
 
-## 2. Gold-fed ablation — which components drive accuracy
+## 2. Gold-fed results
 
-### 2a. Component ablation (n = 30, gpt-5.4-mini, Best-of-N = 4, max_repairs = 3)
+### 2a. Headline — 100-query benchmark (Best-of-N = 8, three independent runs)
 
-*Paired leave-one-out: each arm removes one component; all others held fixed. Gold-fed throughout.*
+*The primary gold-fed result: the full system run across **100 representative Spider 2.0-Snow
+instances** (broader than the ablation slice — includes geospatial databases), replicated three
+times to estimate variance. Model: gpt-5.4-mini. Best-of-N = 8, max_repairs = 4.*
+
+| Run | Accuracy |
+|:----|---:|
+| benchmark_run_10 | 87% (87/100) |
+| benchmark_run_11 | 81% (81/100) |
+| benchmark_run_12 | 84% (84/100) |
+| **Mean** | **84%** (range 81–87%) |
+
+**The gold-assisted full system solves ~84% of a representative 100-query Snow set.**
+Run-to-run variance ±3 pp is real: the ±3 pp band is not noise — it reflects a genuine 14-query
+flaky core that sometimes succeeds, sometimes doesn't (stochastic sampling at temperature 0.2).
+
+**Per-instance stability:**
+
+| Outcome | Count |
+|:--------|------:|
+| Always correct (3/3 runs) | 76 |
+| Flaky (1–2 of 3 runs) | 14 |
+| Never correct (0/3 runs) | 10 |
+
+Reliable solved core: **76%**. Hard unsolvable core: **10%**. The honest "reliable capability"
+is 76%; the best-case is 87%; the mean ceiling is 84%.
+
+**Domain breakdown (majority of 3 runs):**
+
+| Database | Solved | |
+|:---------|:------:|:---|
+| GITHUB_REPOS | 15/15 | ✅ |
+| NOAA_DATA | 12/12 | ✅ |
+| PATENTS | 14/15 | ✅ |
+| GA360 | 10/12 | ✅ |
+| CMS_DATA | 7/7 | ✅ |
+| CENSUS_BUREAU_ACS_2 | 2/4 | ⚠️ retrieval noise on 296-table schema |
+| GEO_OPENSTREETMAP | 3/6 | ❌ |
+| NEW_YORK_NOAA | 1/3 | ❌ |
+| NEW_YORK_CITIBIKE_1 | 1/3 | ❌ |
+
+Geospatial (`ST_*` / distance predicates) is the dominant weak domain. Conventional analytics
+(patents, GitHub, weather, GA360, healthcare) are handled well at Best-of-N = 8.
+
+**Connection to ablation:** the 30-query component ablation showed Best-of-N is the dominant
+component (+80 pp). This 100-query run is that recipe at its strong setting (N=8 + 4 repairs),
+confirming the finding scales: the same architecture that scores 90% on the easier 30-query
+non-geo slice scores 84% on the harder geo-inclusive 100-query set.
+
+---
+
+### 2b. Component ablation (n = 30, gpt-5.4-mini, Best-of-N = 4, max_repairs = 3)
+
+*Paired leave-one-out: each arm removes one component; all others held fixed. Gold-fed throughout.
+This identifies which components drive the 84–90% ceiling.*
 
 | Rank | Component removed | Accuracy | Δ vs full | 95% CI | Tier |
 |-----:|:------------------|---:|---:|:---:|:---|
@@ -154,14 +217,14 @@ targeted at failure modes that appear in larger or more diverse query sets.
 - Best-of-N uses **4× tokens** for **+80 pp accuracy** — unambiguously worth it.
 - Repair loop costs **~2× tokens** for **+16.7 pp** — real but the CI floor touches 0.
 - Knowledge components (semantic, sample-records, verifier, verification) show **no statistically
-  reliable gain at n=30** — not proven useless (n=30 cannot detect true +5–10 pp effects), but
-  require validation at larger N before further investment.
+  reliable gain at n=30** — not proven useless (true +5–10 pp effects are invisible at n=30),
+  but require validation at larger N before further investment.
 
 ---
 
-### 2b. 25-query sweep with cost tracking (gpt-5.4-mini, Best-of-N = 4)
+### 2c. 25-query sweep with cost tracking (gpt-5.4-mini, Best-of-N = 4)
 
-*Full 8-cell leave-one-out with token and cost telemetry. Reference: A0_full = 80% at bon=4.*
+*Full 8-cell leave-one-out with token and dollar-cost telemetry. Reference: A0_full.*
 
 | Cell | Accuracy | Δ acc | Tokens | $ cost | Tok/correct | Wall-clock |
 |:-----|---------:|------:|-------:|-------:|------------:|----------:|
@@ -194,7 +257,7 @@ Zero-rate components are **targeted triggers** — they fire on the right query 
 
 ---
 
-### 2c. Best-of-N scaling curve (same 25 instances, gpt-5.4-mini)
+### 2d. Best-of-N scaling curve (same 25 instances, gpt-5.4-mini)
 
 | N | Source | Accuracy | Tokens | Cost |
 |--:|:-------|---:|---:|---:|
@@ -205,48 +268,10 @@ Zero-rate components are **targeted triggers** — they fire on the right query 
 The scaling is **monotonic and large**: every doubling of N adds 64 pp then 20 pp. The 5 failures
 at N=4 decompose as: 1 unreachable (needed strategy index ≥ 5), 4 lost to sampling variance
 at the winning strategy (existed at N=4 but wasn't drawn). The architecture's measured ceiling on
-this slice is **100% at N=8**.
+this 25-query slice is **100% at N=8**.
 
----
-
-### 2d. 100-query benchmark — gold-fed ceiling at scale
-
-*Best-of-N = 8, max_repairs = 4, three independent runs across a broader 100-query set that
-includes geospatial databases.*
-
-| Run | Accuracy |
-|:----|---:|
-| benchmark_run_10 | 87% (87/100) |
-| benchmark_run_11 | 81% (81/100) |
-| benchmark_run_12 | 84% (84/100) |
-| **Mean** | **84%** (range 81–87%) |
-
-**Stability breakdown:**
-
-| Outcome | Count |
-|:--------|------:|
-| Always correct (3/3 runs) | 76 |
-| Flaky (1–2 of 3 runs) | 14 |
-| Never correct (0/3 runs) | 10 |
-
-Reliable solved core: **76%**. Hard unsolvable core: **10%**. The ±3 pp run variance is the
-flaky band — questions the architecture sometimes gets, sometimes doesn't.
-
-**Domain breakdown:**
-
-| Database | Solved (majority of 3 runs) | |
-|:---------|:---:|:---|
-| GITHUB_REPOS | 15/15 | ✅ |
-| NOAA_DATA | 12/12 | ✅ |
-| PATENTS | 14/15 | ✅ |
-| GA360 | 10/12 | ✅ |
-| CMS_DATA | 7/7 | ✅ |
-| CENSUS_BUREAU_ACS_2 | 2/4 | ⚠️ |
-| GEO_OPENSTREETMAP | 3/6 | ❌ |
-| NEW_YORK_NOAA | 1/3 | ❌ |
-| NEW_YORK_CITIBIKE_1 | 1/3 | ❌ |
-
-Geospatial (`ST_*` / distance predicates) is the dominant weak domain.
+Note: the 25-query slice is non-geo only; the 100-query run (§2a) with N=8 hits 84% on the harder
+geo-inclusive set. The ceiling is query-class dependent, not a universal 100%.
 
 ---
 
