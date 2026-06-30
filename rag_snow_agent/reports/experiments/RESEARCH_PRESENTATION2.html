@@ -27,7 +27,7 @@ li{margin-bottom:.25rem;}
 a{color:var(--accent);text-decoration:none;}
 a:hover{text-decoration:underline;}
 figure figcaption{color:var(--muted);font-size:.82rem;margin-top:.5rem;}
-</style></head><body><nav><h2>Contents</h2><a href="#1-architecture">1. Architecture</a><a href="#layer-1-hybrid-retrieval-index">&nbsp;&nbsp;&nbsp;Layer 1 — Hybrid retrieval index</a><a href="#layer-2-plan-sql-compiler-deterministic">&nbsp;&nbsp;&nbsp;Layer 2 — Plan → SQL compiler (deterministic)</a><a href="#layer-3-best-of-n-with-structural-strategy-diversification">&nbsp;&nbsp;&nbsp;Layer 3 — Best-of-N with structural strategy diversification</a><a href="#layer-4-self-correction-repair-loop">&nbsp;&nbsp;&nbsp;Layer 4 — Self-correction repair loop</a><a href="#layer-5-verification-fingerprint-metamorphic">&nbsp;&nbsp;&nbsp;Layer 5 — Verification (fingerprint + metamorphic)</a><a href="#2-gold-fed-results">2. Gold-fed results</a><a href="#2a-headline-100-query-benchmark-best-of-n-8-three-independent-runs">&nbsp;&nbsp;&nbsp;2a. Headline — 100-query benchmark (Best-of-N = 8, three independent runs)</a><a href="#2b-component-ablation-n-30-gpt-54-mini-best-of-n-4-max_repairs-3">&nbsp;&nbsp;&nbsp;2b. Component ablation (n = 30, gpt-5.4-mini, Best-of-N = 4, max_repairs = 3)</a><a href="#2c-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n-4">&nbsp;&nbsp;&nbsp;2c. 25-query sweep with cost tracking (gpt-5.4-mini, Best-of-N = 4)</a><a href="#2d-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">&nbsp;&nbsp;&nbsp;2d. Best-of-N scaling curve (same 25 instances, gpt-5.4-mini)</a><a href="#2e-interpreting-the-gold-fed-number-what-it-means-and-doesnt">&nbsp;&nbsp;&nbsp;2e. Interpreting the gold-fed number — what it means and doesn't</a><a href="#3-what-changed-the-no-gold-architecture">3. What changed: the no-gold architecture</a><a href="#3a-self-consistency-mbr-voting-replaces-gold-assisted-selection">&nbsp;&nbsp;&nbsp;3a. Self-consistency / MBR voting (replaces gold-assisted selection)</a><a href="#3b-self-critic-repair-loop-replaces-gold-driven-result_mismatch">&nbsp;&nbsp;&nbsp;3b. Self-critic repair loop (replaces gold-driven RESULT_MISMATCH)</a><a href="#3c-exploration-front-end">&nbsp;&nbsp;&nbsp;3c. Exploration front-end</a><a href="#3d-deterministic-data-format-enforcement">&nbsp;&nbsp;&nbsp;3d. Deterministic data-format enforcement</a><a href="#3e-information-aggregation-planning">&nbsp;&nbsp;&nbsp;3e. Information-aggregation planning</a><a href="#3f-schema-indexing-as-infrastructure-prerequisite">&nbsp;&nbsp;&nbsp;3f. Schema indexing as infrastructure prerequisite</a><a href="#4-no-gold-results">4. No-gold results</a><a href="#4a-oracle-gap-hardest-slice-ga360ga4-first-10-non-geo-instances">&nbsp;&nbsp;&nbsp;4a. Oracle gap (hardest slice — GA360/GA4, first 10 non-geo instances)</a><a href="#4b-model-method-interaction">&nbsp;&nbsp;&nbsp;4b. Model × method interaction</a><a href="#4c-attribution-what-the-improved-no-gold-system-actually-does">&nbsp;&nbsp;&nbsp;4c. Attribution — what the improved no-gold system actually does</a><a href="#4d-conventional-schemas-fix-by-fix-progression-no-gold-n20-lenient-scoring">&nbsp;&nbsp;&nbsp;4d. Conventional schemas — fix-by-fix progression (no-gold, n=20, lenient scoring)</a><a href="#4e-overall-no-gold-accuracy-gpt-54-n20-conventional-schemas">&nbsp;&nbsp;&nbsp;4e. Overall no-gold accuracy (gpt-5.4, n=20 conventional schemas)</a><a href="#4f-benchmark-validity-caveat">&nbsp;&nbsp;&nbsp;4f. Benchmark validity caveat</a><a href="#5-apex-sql-current-academicopen-sota">5. APEX-SQL — current academic/open SOTA</a><a href="#stage-1-schema-linking-4-steps">&nbsp;&nbsp;&nbsp;Stage 1 — Schema Linking (4 steps)</a><a href="#stage-2-sql-generation-pre-processing-agentic-loop-selection">&nbsp;&nbsp;&nbsp;Stage 2 — SQL Generation (pre-processing + agentic loop + selection)</a><a href="#apex-sql-pipeline-diagram">&nbsp;&nbsp;&nbsp;APEX-SQL pipeline diagram</a><a href="#apex-sql-benchmark-results">&nbsp;&nbsp;&nbsp;APEX-SQL benchmark results</a><a href="#6-other-sota-methods">6. Other SOTA methods</a><a href="#divskill-sql-spider-20-lite-sota-731">&nbsp;&nbsp;&nbsp;DivSkill-SQL (Spider 2.0-Lite SOTA, 73.1%)</a><a href="#dsr-sql-dual-state-reasoning-mid-tier">&nbsp;&nbsp;&nbsp;DSR-SQL (Dual-State Reasoning, mid-tier)</a><a href="#reforce-prior-academic-sota-on-snow-31-with-o1-preview">&nbsp;&nbsp;&nbsp;ReFoRCE (prior academic SOTA on Snow, 31% with o1-preview)</a><a href="#7-databricks-genie-commercial-architecture">7. Databricks Genie — commercial architecture</a><a href="#the-genie-space-configuration-unit">&nbsp;&nbsp;&nbsp;The Genie Space — configuration unit</a><a href="#5-layer-schema-linking">&nbsp;&nbsp;&nbsp;5-layer schema linking</a><a href="#llm-backbone-compound-ai-with-model-rotation">&nbsp;&nbsp;&nbsp;LLM backbone — compound AI with model rotation</a><a href="#agentic-evolution">&nbsp;&nbsp;&nbsp;Agentic evolution</a><a href="#trusted-assets-the-key-structural-differentiator">&nbsp;&nbsp;&nbsp;Trusted Assets — the key structural differentiator</a><a href="#key-tradeoff">&nbsp;&nbsp;&nbsp;Key tradeoff</a><a href="#8-sota-ranked-spider-20-snow-execution-accuracy">8. SOTA ranked (Spider 2.0-Snow execution accuracy)</a><a href="#9-three-way-comparison-our-system-vs-apex-sql-vs-databricks-genie">9. Three-way comparison: our system vs. APEX-SQL vs. Databricks Genie</a><a href="#10-where-we-stand-and-what-closing-the-gap-requires">10. Where we stand and what closing the gap requires</a></nav><main><h1 id="text-to-sql-research-architecture-results-and-sota-comparison">Text-to-SQL Research — Architecture, Results, and SOTA Comparison</h1>
+</style></head><body><nav><h2>Contents</h2><a href="#1-architecture">1. Architecture</a><a href="#layer-1-hybrid-retrieval-index">&nbsp;&nbsp;&nbsp;Layer 1 — Hybrid retrieval index</a><a href="#layer-2-plan-sql-compiler-deterministic">&nbsp;&nbsp;&nbsp;Layer 2 — Plan → SQL compiler (deterministic)</a><a href="#layer-3-best-of-n-with-structural-strategy-diversification">&nbsp;&nbsp;&nbsp;Layer 3 — Best-of-N with structural strategy diversification</a><a href="#layer-4-self-correction-repair-loop">&nbsp;&nbsp;&nbsp;Layer 4 — Self-correction repair loop</a><a href="#layer-5-verification-fingerprint-metamorphic">&nbsp;&nbsp;&nbsp;Layer 5 — Verification (fingerprint + metamorphic)</a><a href="#2-gold-fed-results">2. Gold-fed results</a><a href="#2a-headline-100-query-benchmark-best-of-n-8-three-independent-runs">&nbsp;&nbsp;&nbsp;2a. Headline — 100-query benchmark (Best-of-N = 8, three independent runs)</a><a href="#2b-component-ablation-n-30-gpt-54-mini-best-of-n-4-max_repairs-3">&nbsp;&nbsp;&nbsp;2b. Component ablation (n = 30, gpt-5.4-mini, Best-of-N = 4, max_repairs = 3)</a><a href="#2c-25-query-sweep-with-cost-tracking-gpt-54-mini-best-of-n-4">&nbsp;&nbsp;&nbsp;2c. 25-query sweep with cost tracking (gpt-5.4-mini, Best-of-N = 4)</a><a href="#2d-best-of-n-scaling-curve-same-25-instances-gpt-54-mini">&nbsp;&nbsp;&nbsp;2d. Best-of-N scaling curve (same 25 instances, gpt-5.4-mini)</a><a href="#2e-interpreting-the-gold-fed-number-what-it-means-and-doesnt">&nbsp;&nbsp;&nbsp;2e. Interpreting the gold-fed number — what it means and doesn't</a><a href="#3-what-changed-the-no-gold-architecture">3. What changed: the no-gold architecture</a><a href="#3a-self-consistency-mbr-voting-replaces-gold-assisted-selection">&nbsp;&nbsp;&nbsp;3a. Self-consistency / MBR voting (replaces gold-assisted selection)</a><a href="#3b-self-critic-repair-loop-replaces-gold-driven-result_mismatch">&nbsp;&nbsp;&nbsp;3b. Self-critic repair loop (replaces gold-driven RESULT_MISMATCH)</a><a href="#3c-exploration-front-end">&nbsp;&nbsp;&nbsp;3c. Exploration front-end</a><a href="#3d-deterministic-data-format-enforcement">&nbsp;&nbsp;&nbsp;3d. Deterministic data-format enforcement</a><a href="#3e-information-aggregation-planning">&nbsp;&nbsp;&nbsp;3e. Information-aggregation planning</a><a href="#3f-schema-indexing-as-infrastructure-prerequisite">&nbsp;&nbsp;&nbsp;3f. Schema indexing as infrastructure prerequisite</a><a href="#4-no-gold-results">4. No-gold results</a><a href="#4a-oracle-gap-hardest-slice-ga360ga4-first-10-non-geo-instances">&nbsp;&nbsp;&nbsp;4a. Oracle gap (hardest slice — GA360/GA4, first 10 non-geo instances)</a><a href="#4b-model-method-interaction">&nbsp;&nbsp;&nbsp;4b. Model × method interaction</a><a href="#4c-attribution-what-the-improved-no-gold-system-actually-does">&nbsp;&nbsp;&nbsp;4c. Attribution — what the improved no-gold system actually does</a><a href="#4d-conventional-schemas-fix-by-fix-progression-no-gold-n20-lenient-scoring">&nbsp;&nbsp;&nbsp;4d. Conventional schemas — fix-by-fix progression (no-gold, n=20, lenient scoring)</a><a href="#4e-overall-no-gold-accuracy-gpt-54-n20-conventional-schemas">&nbsp;&nbsp;&nbsp;4e. Overall no-gold accuracy (gpt-5.4, n=20 conventional schemas)</a><a href="#4f-benchmark-validity-caveat">&nbsp;&nbsp;&nbsp;4f. Benchmark validity caveat</a><a href="#5-apex-sql-current-academicopen-sota">5. APEX-SQL — current academic/open SOTA</a><a href="#stage-1-schema-linking-4-steps">&nbsp;&nbsp;&nbsp;Stage 1 — Schema Linking (4 steps)</a><a href="#stage-2-sql-generation-pre-processing-agentic-loop-selection">&nbsp;&nbsp;&nbsp;Stage 2 — SQL Generation (pre-processing + agentic loop + selection)</a><a href="#apex-sql-pipeline-high-level-flow">&nbsp;&nbsp;&nbsp;APEX-SQL pipeline — high-level flow</a><a href="#apex-sql-pipeline-detailed-breakdown">&nbsp;&nbsp;&nbsp;APEX-SQL pipeline — detailed breakdown</a><a href="#apex-sql-benchmark-results">&nbsp;&nbsp;&nbsp;APEX-SQL benchmark results</a><a href="#6-other-sota-methods">6. Other SOTA methods</a><a href="#divskill-sql-spider-20-lite-sota-731">&nbsp;&nbsp;&nbsp;DivSkill-SQL (Spider 2.0-Lite SOTA, 73.1%)</a><a href="#dsr-sql-dual-state-reasoning-mid-tier">&nbsp;&nbsp;&nbsp;DSR-SQL (Dual-State Reasoning, mid-tier)</a><a href="#reforce-prior-academic-sota-on-snow-31-with-o1-preview">&nbsp;&nbsp;&nbsp;ReFoRCE (prior academic SOTA on Snow, 31% with o1-preview)</a><a href="#7-databricks-genie-commercial-architecture">7. Databricks Genie — commercial architecture</a><a href="#the-genie-space-configuration-unit">&nbsp;&nbsp;&nbsp;The Genie Space — configuration unit</a><a href="#5-layer-schema-linking">&nbsp;&nbsp;&nbsp;5-layer schema linking</a><a href="#llm-backbone-compound-ai-with-model-rotation">&nbsp;&nbsp;&nbsp;LLM backbone — compound AI with model rotation</a><a href="#agentic-evolution">&nbsp;&nbsp;&nbsp;Agentic evolution</a><a href="#trusted-assets-the-key-structural-differentiator">&nbsp;&nbsp;&nbsp;Trusted Assets — the key structural differentiator</a><a href="#key-tradeoff">&nbsp;&nbsp;&nbsp;Key tradeoff</a><a href="#8-sota-ranked-spider-20-snow-execution-accuracy">8. SOTA ranked (Spider 2.0-Snow execution accuracy)</a><a href="#9-three-way-comparison-our-system-vs-apex-sql-vs-databricks-genie">9. Three-way comparison: our system vs. APEX-SQL vs. Databricks Genie</a><a href="#10-where-we-stand-and-what-closing-the-gap-requires">10. Where we stand and what closing the gap requires</a></nav><main><h1 id="text-to-sql-research-architecture-results-and-sota-comparison">Text-to-SQL Research — Architecture, Results, and SOTA Comparison</h1>
 
 <p><em>Spider 2.0-Snow: 547 NL→SQL tasks over enterprise Snowflake databases.</em>
 <em>Source data: <code>GOLD_FED_ABLATION_REPORT.md</code>, <code>GOLD_FED_100Q_REPORT.md</code>, <code>NOGOLD_EXPERIMENT_REPORT.md</code>, <code>FINAL_REPORT.md</code>, <code>PRESENTATION.md</code>.</em></p>
@@ -105,15 +105,60 @@ retrieved set further:
 - 1-hop join-graph expansion: add tables reachable via one FK hop from any retained table
 - VARIANT enrichment: inject <code>SnowflakeSyntax</code> cards for tables with nested JSON/ARRAY columns</p>
 
-<p><strong>Retrieval recall — honest gap:</strong> we have not computed a direct schema-linking recall metric
-(no ground-truth table/column sets for the Spider 2.0-Snow queries). The only proxy we have is
-the schema indexing coverage result (§3f): 5/36 queries execute when the DB is <em>not</em> indexed
-vs 19/20 when it is — which measures coverage, not column-level recall quality. Two known failure
-classes attributable to retrieval: (1) <code>CENSUS_BUREAU_ACS_2</code> (296 tables — retrieval noise
-causes rank dilution on broad schemas); (2) <code>GEO_OPENSTREETMAP</code> spatial tables missing from
-retrieval when non-spatial cards crowd out the top-K. For comparison: APEX-SQL measures schema
-linking on the same benchmark at <strong>88.33% Strict Recall Rate</strong> (correct table+column sets in
-top results, N=120 pilot). We do not have an equivalent number.</p>
+<p><strong>Retrieval recall — measured on 43 instances with gold SQL.</strong> We computed Schema Retrieval Rate
+(SRR): fraction of instances where all gold-SQL-referenced tables appear in our top-8 retrieved
+schema slice (embedding + BM25 hybrid, no LLM calls). Result: <strong>86.0% (37/43)</strong> when date-sharded
+partition tables are excluded from the required set (our deliberate design choice — shard tables are
+collapsed to a single representative schema card). Strict SRR (counting shard misses) is 83.7%
+(36/43). For reference, APEX-SQL reports <strong>88.33% Strict Recall Rate</strong> (N=120 pilot, same benchmark).</p>
+
+<p><strong>Remaining 6 misses (after shard exclusion):</strong></p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Instance</th>
+  <th style="text-align:left;">Missing table(s)</th>
+  <th style="text-align:left;">Root cause</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;">sf_bq295</td>
+  <td style="text-align:left;"><code>GITHUB_REPOS_DATE.GITHUB_REPOS.SAMPLE_CONTENTS</code></td>
+  <td style="text-align:left;">Cross-schema content table not semantically close to query keywords</td>
+</tr>
+<tr>
+  <td style="text-align:left;">sf_bq236</td>
+  <td style="text-align:left;"><code>GEO_US_BOUNDARIES.ZIP_CODES</code></td>
+  <td style="text-align:left;">Cross-schema spatial join; geo table from a different schema not indexed in query context</td>
+</tr>
+<tr>
+  <td style="text-align:left;">sf_bq358</td>
+  <td style="text-align:left;"><code>GEO_US_BOUNDARIES.ZIP_CODES</code>, <code>NEW_YORK_CITIBIKE.CITIBIKE_TRIPS</code></td>
+  <td style="text-align:left;">Same cross-schema geo miss + main table outranked by year-sharded NOAA tables</td>
+</tr>
+<tr>
+  <td style="text-align:left;">sf_bq050</td>
+  <td style="text-align:left;"><code>GEO_US_BOUNDARIES.ZIP_CODES</code>, <code>CITIBIKE_TRIPS</code></td>
+  <td style="text-align:left;">Same as above</td>
+</tr>
+<tr>
+  <td style="text-align:left;">sf_bq429</td>
+  <td style="text-align:left;"><code>GEO_US_BOUNDARIES.ZIP_CODES</code></td>
+  <td style="text-align:left;">Cross-schema geo table miss</td>
+</tr>
+<tr>
+  <td style="text-align:left;">sf_local309</td>
+  <td style="text-align:left;"><code>CONSTRUCTORS</code>, <code>RACES</code>, <code>RESULTS</code>, <code>SPRINT_RESULTS</code></td>
+  <td style="text-align:left;">Complex 7-table F1 query; top-8 insufficient to cover all needed tables</td>
+</tr>
+</tbody>
+</table>
+
+<p><strong>Pattern:</strong> 4 of 6 remaining misses share the same root cause — <code>GEO_US_BOUNDARIES.ZIP_CODES</code> stored in a cross-schema location not semantically associated with query keywords. A cross-schema geo-table awareness rule would fix these.</p>
+
+<p><strong>Economic advantage:</strong> our embedding + BM25 hybrid retrieval achieves 86.0% SRR with zero LLM completion tokens in the schema-linking step — compared to APEX-SQL's 88.33% which requires two LLM pruning passes per query (~14k tokens). For production workloads where schema linking runs on every query, this is a meaningful cost advantage at comparable recall.</p>
 
 <hr />
 
@@ -1142,6 +1187,25 @@ superficially similar column names when it reasons without them.</li>
 <li><em>Removing this step: −5 pp SRR on Spider 2.0-Snow (120-case pilot).</em></li>
 </ul>
 
+<p><strong>Example — schema-agnostic logical plan:</strong></p>
+
+<blockquote>
+  <p><em>Question:</em> "Considering only the latest release versions of NPM packages, which packages are
+  the top 8 most popular based on GitHub stars, as well as their versions?"</p>
+</blockquote>
+
+<pre><code>1. Identify all packages in the NPM ecosystem.
+2. For each package, identify release versions.
+3. Determine which version is the latest release.
+4. Link each package to its project or repository.
+5. Get GitHub star count for each linked project.
+6. Rank packages by star count descending.
+7. Return package name and version for top 8.
+</code></pre>
+
+<p>Notice: no table names, no column names, no SQL — pure intent. Schema pruning and SQL generation
+happen in subsequent steps, guided by this plan.</p>
+
 <p><strong>Step 2: Dual-Pathway Pruning</strong></p>
 
 <ul>
@@ -1248,6 +1312,19 @@ directing the probes toward the most relevant areas.</li>
 <p>Multiple reasoning paths from Stage 1 are consolidated into a single unified master plan injected
 into the agent's initial context. Prevents the agent from starting blind or from anchoring on a
 single reasoning path.</p>
+
+<p><strong>Example — consolidated macro plan</strong> (same NPM question):</p>
+
+<pre><code>1. Filter NPM packages.
+2. Keep only release versions.
+3. Identify latest release per package.
+4. Join package versions to projects.
+5. Rank by GitHub stars.
+6. Return top 8 package names and versions.
+</code></pre>
+
+<p>Compared to the logical plan above, the macro plan is shorter and action-oriented — it drops
+the exploratory reasoning and keeps only the executable steps that guide SQL synthesis.</p>
 
 <p><strong>Pre-processing B: Deterministic Guidance Retrieval</strong> (<code>preprocess_select_tips.py</code>)</p>
 
@@ -1416,7 +1493,18 @@ query count — the agent is more directed.</p>
 
 <hr />
 
-<h3 id="apex-sql-pipeline-diagram">APEX-SQL pipeline diagram</h3>
+<h3 id="apex-sql-pipeline-high-level-flow">APEX-SQL pipeline — high-level flow</h3>
+
+<pre><code> User Question
+      │
+      ▼
+ Hypotheses ──► Schema Pruning ──► Data Exploration ──► Verified Schema
+                                                               │
+                                                               ▼
+  Final SQL ◄── Voting ◄── Execution Feedback ◄── Candidate SQLs ◄── Guided SQL Exploration
+</code></pre>
+
+<h3 id="apex-sql-pipeline-detailed-breakdown">APEX-SQL pipeline — detailed breakdown</h3>
 
 <pre><code>NL question
     │

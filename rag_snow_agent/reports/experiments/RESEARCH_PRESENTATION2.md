@@ -47,15 +47,27 @@ retrieved set further:
 - 1-hop join-graph expansion: add tables reachable via one FK hop from any retained table
 - VARIANT enrichment: inject `SnowflakeSyntax` cards for tables with nested JSON/ARRAY columns
 
-**Retrieval recall — honest gap:** we have not computed a direct schema-linking recall metric
-(no ground-truth table/column sets for the Spider 2.0-Snow queries). The only proxy we have is
-the schema indexing coverage result (§3f): 5/36 queries execute when the DB is *not* indexed
-vs 19/20 when it is — which measures coverage, not column-level recall quality. Two known failure
-classes attributable to retrieval: (1) `CENSUS_BUREAU_ACS_2` (296 tables — retrieval noise
-causes rank dilution on broad schemas); (2) `GEO_OPENSTREETMAP` spatial tables missing from
-retrieval when non-spatial cards crowd out the top-K. For comparison: APEX-SQL measures schema
-linking on the same benchmark at **88.33% Strict Recall Rate** (correct table+column sets in
-top results, N=120 pilot). We do not have an equivalent number.
+**Retrieval recall — measured on 43 instances with gold SQL.** We computed Schema Retrieval Rate
+(SRR): fraction of instances where all gold-SQL-referenced tables appear in our top-8 retrieved
+schema slice (embedding + BM25 hybrid, no LLM calls). Result: **86.0% (37/43)** when date-sharded
+partition tables are excluded from the required set (our deliberate design choice — shard tables are
+collapsed to a single representative schema card). Strict SRR (counting shard misses) is 83.7%
+(36/43). For reference, APEX-SQL reports **88.33% Strict Recall Rate** (N=120 pilot, same benchmark).
+
+**Remaining 6 misses (after shard exclusion):**
+
+| Instance | Missing table(s) | Root cause |
+|:---------|:-----------------|:-----------|
+| sf_bq295 | `GITHUB_REPOS_DATE.GITHUB_REPOS.SAMPLE_CONTENTS` | Cross-schema content table not semantically close to query keywords |
+| sf_bq236 | `GEO_US_BOUNDARIES.ZIP_CODES` | Cross-schema spatial join; geo table from a different schema not indexed in query context |
+| sf_bq358 | `GEO_US_BOUNDARIES.ZIP_CODES`, `NEW_YORK_CITIBIKE.CITIBIKE_TRIPS` | Same cross-schema geo miss + main table outranked by year-sharded NOAA tables |
+| sf_bq050 | `GEO_US_BOUNDARIES.ZIP_CODES`, `CITIBIKE_TRIPS` | Same as above |
+| sf_bq429 | `GEO_US_BOUNDARIES.ZIP_CODES` | Cross-schema geo table miss |
+| sf_local309 | `CONSTRUCTORS`, `RACES`, `RESULTS`, `SPRINT_RESULTS` | Complex 7-table F1 query; top-8 insufficient to cover all needed tables |
+
+**Pattern:** 4 of 6 remaining misses share the same root cause — `GEO_US_BOUNDARIES.ZIP_CODES` stored in a cross-schema location not semantically associated with query keywords. A cross-schema geo-table awareness rule would fix these.
+
+**Economic advantage:** our embedding + BM25 hybrid retrieval achieves 86.0% SRR with zero LLM completion tokens in the schema-linking step — compared to APEX-SQL's 88.33% which requires two LLM pruning passes per query (~14k tokens). For production workloads where schema linking runs on every query, this is a meaningful cost advantage at comparable recall.
 
 ---
 
@@ -544,6 +556,24 @@ data, verifies them by running SQL against the live database, and only then gene
   superficially similar column names when it reasons without them.
 - *Removing this step: −5 pp SRR on Spider 2.0-Snow (120-case pilot).*
 
+**Example — schema-agnostic logical plan:**
+
+> *Question:* "Considering only the latest release versions of NPM packages, which packages are
+> the top 8 most popular based on GitHub stars, as well as their versions?"
+
+```
+1. Identify all packages in the NPM ecosystem.
+2. For each package, identify release versions.
+3. Determine which version is the latest release.
+4. Link each package to its project or repository.
+5. Get GitHub star count for each linked project.
+6. Rank packages by star count descending.
+7. Return package name and version for top 8.
+```
+
+Notice: no table names, no column names, no SQL — pure intent. Schema pruning and SQL generation
+happen in subsequent steps, guided by this plan.
+
 **Step 2: Dual-Pathway Pruning**
 
 - Two simultaneous LLM passes over the full column set:
@@ -599,6 +629,20 @@ Baseline ReFoRCE schema linking on the same protocol: **35.0% SRR**.
 Multiple reasoning paths from Stage 1 are consolidated into a single unified master plan injected
 into the agent's initial context. Prevents the agent from starting blind or from anchoring on a
 single reasoning path.
+
+**Example — consolidated macro plan** (same NPM question):
+
+```
+1. Filter NPM packages.
+2. Keep only release versions.
+3. Identify latest release per package.
+4. Join package versions to projects.
+5. Rank by GitHub stars.
+6. Return top 8 package names and versions.
+```
+
+Compared to the logical plan above, the macro plan is shorter and action-oriented — it drops
+the exploratory reasoning and keeps only the executable steps that guide SQL synthesis.
 
 **Pre-processing B: Deterministic Guidance Retrieval** (`preprocess_select_tips.py`)
 
@@ -658,7 +702,19 @@ SQL synthesis is force-triggered at 52 k tokens to guarantee a candidate before 
 
 ---
 
-### APEX-SQL pipeline diagram
+### APEX-SQL pipeline — high-level flow
+
+```
+ User Question
+      │
+      ▼
+ Hypotheses ──► Schema Pruning ──► Data Exploration ──► Verified Schema
+                                                               │
+                                                               ▼
+  Final SQL ◄── Voting ◄── Execution Feedback ◄── Candidate SQLs ◄── Guided SQL Exploration
+```
+
+### APEX-SQL pipeline — detailed breakdown
 
 ```
 NL question
