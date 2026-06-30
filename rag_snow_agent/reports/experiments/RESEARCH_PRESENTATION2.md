@@ -84,12 +84,26 @@ implemented (geospatial is the largest remaining gap — see §5).
 select the best by a multi-signal selector.
 
 **Strategies (cycled by index, one per candidate):**
-`default` → `flatten_first` → `join_first` → `metric_first` → `time_first` → `cte_first` → `geo_first` → `default` (repeat)
 
-Each strategy alters the prompt's emphasis — `join_first` anchors on join traversal before
-aggregation; `flatten_first` leads with LATERAL FLATTEN for nested columns; `metric_first` leads
-with the output metric and works backward to sources. This creates *structural* diversity, not
-stochastic re-sampling of the same prompt.
+All strategies share the same two-step pipeline — the LLM produces a structured JSON plan, a
+deterministic compiler emits Snowflake SQL. The strategy is a single extra instruction prepended
+to the plan-generation system prompt, biasing *where the LLM starts reasoning*:
+
+| Strategy | Opening instruction to LLM | Targets |
+|:---------|:---------------------------|:--------|
+| `default` | *(no extra hint)* | General queries |
+| `flatten_first` | Start by identifying VARIANT/ARRAY columns needing LATERAL FLATTEN | Nested / semi-structured data |
+| `cte_first` | Break the question into sequential steps; each step becomes a CTE | Multi-step aggregations, ranking, set ops |
+| `join_first` | Start by identifying the correct JOIN relationships; build outward from joins | Multi-table joins |
+| `metric_first` | Start by identifying the target metric/aggregation, then trace back to sources | COUNT/SUM/AVG questions |
+| `time_first` | Start by identifying date/time filters or time-based grouping | Time-series, date-range filters |
+| `geo_first` | Start by identifying geospatial predicates (ST_WITHIN, ST_DWITHIN, radius…) | Spatial / location queries |
+
+Rotation order for N=4: `default` → `flatten_first` → `cte_first` → `join_first`. For N=8 all
+seven strategies fire, then `default` repeats. Temperature ramps from T=0.2 (candidate 1) to
+T=0.3 (candidates 2+) for additional stochastic diversity on top of the structural hint.
+
+This creates *structural* diversity, not stochastic re-sampling of the same prompt.
 
 **Selection (multi-signal):** the selector scores candidates on: (1) execution success,
 (2) result non-emptiness, (3) result-set agreement across candidates (self-consistency voting),

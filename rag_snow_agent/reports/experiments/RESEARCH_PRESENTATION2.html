@@ -141,13 +141,64 @@ implemented (geospatial is the largest remaining gap — see §5).</p>
 <p><strong>What:</strong> generate N SQL candidates, each from a structurally different prompting strategy, then
 select the best by a multi-signal selector.</p>
 
-<p><strong>Strategies (cycled by index, one per candidate):</strong>
-<code>default</code> → <code>flatten_first</code> → <code>join_first</code> → <code>metric_first</code> → <code>time_first</code> → <code>cte_first</code> → <code>geo_first</code> → <code>default</code> (repeat)</p>
+<p><strong>Strategies (cycled by index, one per candidate):</strong></p>
 
-<p>Each strategy alters the prompt's emphasis — <code>join_first</code> anchors on join traversal before
-aggregation; <code>flatten_first</code> leads with LATERAL FLATTEN for nested columns; <code>metric_first</code> leads
-with the output metric and works backward to sources. This creates <em>structural</em> diversity, not
-stochastic re-sampling of the same prompt.</p>
+<p>All strategies share the same two-step pipeline — the LLM produces a structured JSON plan, a
+deterministic compiler emits Snowflake SQL. The strategy is a single extra instruction prepended
+to the plan-generation system prompt, biasing <em>where the LLM starts reasoning</em>:</p>
+
+<table>
+<thead>
+<tr>
+  <th style="text-align:left;">Strategy</th>
+  <th style="text-align:left;">Opening instruction to LLM</th>
+  <th style="text-align:left;">Targets</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td style="text-align:left;"><code>default</code></td>
+  <td style="text-align:left;"><em>(no extra hint)</em></td>
+  <td style="text-align:left;">General queries</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>flatten_first</code></td>
+  <td style="text-align:left;">Start by identifying VARIANT/ARRAY columns needing LATERAL FLATTEN</td>
+  <td style="text-align:left;">Nested / semi-structured data</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>cte_first</code></td>
+  <td style="text-align:left;">Break the question into sequential steps; each step becomes a CTE</td>
+  <td style="text-align:left;">Multi-step aggregations, ranking, set ops</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>join_first</code></td>
+  <td style="text-align:left;">Start by identifying the correct JOIN relationships; build outward from joins</td>
+  <td style="text-align:left;">Multi-table joins</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>metric_first</code></td>
+  <td style="text-align:left;">Start by identifying the target metric/aggregation, then trace back to sources</td>
+  <td style="text-align:left;">COUNT/SUM/AVG questions</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>time_first</code></td>
+  <td style="text-align:left;">Start by identifying date/time filters or time-based grouping</td>
+  <td style="text-align:left;">Time-series, date-range filters</td>
+</tr>
+<tr>
+  <td style="text-align:left;"><code>geo_first</code></td>
+  <td style="text-align:left;">Start by identifying geospatial predicates (ST<em>WITHIN, ST</em>DWITHIN, radius…)</td>
+  <td style="text-align:left;">Spatial / location queries</td>
+</tr>
+</tbody>
+</table>
+
+<p>Rotation order for N=4: <code>default</code> → <code>flatten_first</code> → <code>cte_first</code> → <code>join_first</code>. For N=8 all
+seven strategies fire, then <code>default</code> repeats. Temperature ramps from T=0.2 (candidate 1) to
+T=0.3 (candidates 2+) for additional stochastic diversity on top of the structural hint.</p>
+
+<p>This creates <em>structural</em> diversity, not stochastic re-sampling of the same prompt.</p>
 
 <p><strong>Selection (multi-signal):</strong> the selector scores candidates on: (1) execution success,
 (2) result non-emptiness, (3) result-set agreement across candidates (self-consistency voting),
