@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import asdict
 from pathlib import Path
@@ -9,8 +10,13 @@ from pathlib import Path
 from ..chroma.chroma_store import ChromaStore
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import SnowflakeExecutor
-from .candidate_generator import CandidateItem, generate_candidate_sqls
+from .candidate_generator import (
+    CandidateItem,
+    _detect_unqualified_change_ambiguity,
+    generate_candidate_sqls,
+)
 from .error_classifier import classify_snowflake_error
+from .llm_client import call_llm
 from .metamorphic import run_metamorphic_checks
 from .refiner import refine_sql
 from .result_fingerprint import build_result_fingerprint
@@ -58,16 +64,30 @@ def _result_signature(cr: dict, max_rows: int = 200) -> tuple | None:
     if not cr.get("execution_success"):
         return None
     row_count = cr.get("row_count")
-    if row_count is None:
+    if not row_count:
+        # Empty results carry no real agreement signal: candidates sharing
+        # an over-strict WHERE clause (a common shared misreading of the
+        # question) all return zero rows and would otherwise cluster into a
+        # trivial "consensus" that rewards the exact failure mode voting is
+        # meant to catch.
         return None
-    cols = tuple(sorted((c or "").strip().lower() for c in (cr.get("column_names") or [])))
+    orig_col_names = cr.get("column_names") or []
+    raw_cols = [(c or "").strip().lower() for c in orig_col_names]
+    # Sort once and reuse the permutation for both the column-name tuple and
+    # every row's values — sorting `cols` alone while pulling `vals` in the
+    # original column order left two candidates with identical data but
+    # differently-ordered SELECT lists producing mismatched signatures,
+    # silently fragmenting their consensus vote across separate clusters.
+    order = sorted(range(len(raw_cols)), key=lambda i: raw_cols[i])
+    cols = tuple(raw_cols[i] for i in order)
     rows = cr.get("rows_sample") or []
     norm_rows: list[tuple] = []
     for row in rows[:max_rows]:
         if isinstance(row, dict):
-            vals = [row.get(c) for c in (cr.get("column_names") or [])]
+            raw_vals = [row.get(c) for c in orig_col_names]
         else:
-            vals = list(row)
+            raw_vals = list(row)
+        vals = [raw_vals[i] for i in order] if len(raw_vals) == len(order) else raw_vals
         norm_rows.append(tuple(_normalize_cell(v) for v in vals))
     norm_rows.sort(key=lambda t: tuple(str(x) for x in t))
     return (row_count, cols, tuple(norm_rows))
@@ -93,7 +113,200 @@ def _assign_consensus_votes(candidate_results: list[dict]) -> None:
         sig = cr.get("_result_sig")
         if sig is not None:
             cr["consensus_votes"] = len(clusters.get(sig, ()))
-        cr.pop("_result_sig", None)
+
+
+def _mark_tiebreak_used(flipped: bool) -> None:
+    """Best-effort telemetry mark; never raises into the selection path."""
+    try:
+        from ..observability.instance_telemetry import telemetry
+        telemetry.mark("tiebreak_used")
+        if flipped:
+            telemetry.mark("tiebreak_flipped_winner")
+    except Exception:
+        pass
+
+
+def _intrinsic_score(cr: dict) -> float:
+    """Candidate score with the consensus/self-consistency bonus subtracted
+    back out.
+
+    ``consensus_bonus`` rewards agreement (up to (votes-1)*18 points — see
+    DEFAULT_SCORING) on top of every other signal (execution success, shape,
+    verifier). That's the right default — agreement is real evidence — but
+    it means a majority cluster can out-score a minority by vote count alone
+    even when the minority is just as strong on every *other* signal. This
+    strips that one component back out so two clusters can be compared on
+    everything except how many strategies happened to agree with them.
+    """
+    consensus_component = cr.get("score_breakdown", {}).get("consensus", 0.0)
+    return cr["score"] - consensus_component
+
+
+# A challenger's *intrinsic* score (score with the consensus bonus removed)
+# must reach at least this fraction of the leader's intrinsic score to be
+# worth an LLM tie-break call. Calibrated against a real, confirmed case
+# (sf_bq059): a lone correct candidate (1 vote, intrinsic score 90.4) lost
+# outright to a 6-vote wrong cluster (score 200.6, intrinsic 110.6) purely
+# because the wrong cluster's vote-count bonus ((6-1)*18=90) dwarfed the
+# correct candidate's total score — ratio 90.4/110.6 ≈ 0.82. Set below that
+# observed value (not AT it, to avoid overfitting to one data point) so this
+# threshold has real margin, while still being conservative enough not to
+# fire on every plausible-but-clearly-weaker minority candidate.
+TIEBREAK_INTRINSIC_RATIO = 0.75
+
+
+def _find_tiebreak_pair(candidate_results: list[dict]) -> tuple[dict, dict] | None:
+    """Return (leader, challenger) if a second, differently-answered cluster
+    is intrinsically competitive with the plurality leader, else None.
+
+    Plurality voting alone can be fooled two ways: (1) several strategies
+    share the same mistake, forming a false majority, or (2) that false
+    majority's vote-count bonus alone is enough to bury a single correct
+    outlier that would otherwise score competitively. Both are covered by
+    comparing INTRINSIC scores (see _intrinsic_score) rather than requiring
+    a minimum vote count on the challenger — a challenger with only 1 vote
+    can still qualify if it's intrinsically nearly as strong as the leader;
+    a weak, genuinely-implausible outlier won't have a competitive intrinsic
+    score regardless of vote count, so this doesn't fire on ordinary noise.
+    """
+    best_per_cluster: dict[tuple, dict] = {}
+    for cr in candidate_results:
+        sig = cr.get("_result_sig")
+        if sig is None or not cr.get("execution_success"):
+            continue
+        if sig not in best_per_cluster or cr["score"] > best_per_cluster[sig]["score"]:
+            best_per_cluster[sig] = cr
+
+    clusters = sorted(best_per_cluster.values(), key=lambda c: c["score"], reverse=True)
+    if len(clusters) < 2:
+        return None
+    leader, challenger = clusters[0], clusters[1]
+    leader_intrinsic = _intrinsic_score(leader)
+    challenger_intrinsic = _intrinsic_score(challenger)
+    if leader_intrinsic <= 0:
+        # Degenerate case (e.g. leader itself scored <= 0 before any
+        # consensus bonus) — ratio comparison is meaningless; fall back to
+        # the plain sign check so an intrinsically-negative leader can still
+        # be challenged by any intrinsically-positive candidate.
+        if challenger_intrinsic < leader_intrinsic:
+            return None
+        return leader, challenger
+    if challenger_intrinsic < leader_intrinsic * TIEBREAK_INTRINSIC_RATIO:
+        return None
+    return leader, challenger
+
+
+def _preview_candidate_result(cr: dict, max_rows: int = 5, max_cell: int = 80) -> str:
+    """Compact text preview of a candidate's executed result for the LLM
+    tie-break prompt (rows_sample/column_names survive the exec_result pop
+    since they're stored as top-level keys on the candidate dict)."""
+    cols = cr.get("column_names") or []
+    rows = cr.get("rows_sample") or []
+    lines = [f"row_count={cr.get('row_count')}, columns={cols}"]
+    for row in rows[:max_rows]:
+        if isinstance(row, dict):
+            vals = [row.get(c) for c in cols] if cols else list(row.values())
+        else:
+            vals = list(row)
+        cells = ["NULL" if v is None else str(v)[:max_cell] for v in vals]
+        lines.append(" | ".join(cells))
+    if len(rows) > max_rows:
+        lines.append(f"... ({len(rows) - max_rows} more sampled rows)")
+    return "\n".join(lines)
+
+
+_CHANGE_AMBIGUITY_TIEBREAK_ADDENDUM = (
+    "\nNAMED AMBIGUITY DETECTED — unqualified \"change\"/\"difference\": this "
+    "question's wording doesn't specify whether a SIGNED value (can be "
+    "negative — e.g. a decrease counts as a negative change) or an ABSOLUTE "
+    "MAGNITUDE (via ABS(), always non-negative — a big decrease counts just "
+    "as much as a big increase) is intended. Both are grammatically valid "
+    "readings in isolation, so don't just default to whichever seems more "
+    "\"literal\" — that's not a tiebreaker here. Instead weigh this specific "
+    "signal: pairing a magnitude superlative (\"highest\"/\"largest\"/"
+    "\"biggest\"/\"most\", or their \"lowest\"/\"smallest\" counterparts) with "
+    "a direction-NEUTRAL noun like \"change\" (as opposed to a direction-"
+    "committed noun like \"increase\"/\"growth\"/\"decrease\"/\"decline\") is "
+    "a common data-reporting convention — think \"biggest movers\" style "
+    "reporting, where a sharp drop is just as reportable an event as a sharp "
+    "rise. If the question had meant a specifically positive/negative trend, "
+    "it would more naturally have said \"increase\"/\"growth\" or "
+    "\"decrease\"/\"decline\" instead of the neutral \"change\". This favors "
+    "(but does not guarantee) the ABSOLUTE MAGNITUDE reading when superlative "
+    "wording is present — weigh it as one input alongside the actual SQL "
+    "logic and data, not as a rule that overrides everything else.\n"
+)
+
+
+def _llm_tiebreak(instruction: str, leader: dict, challenger: dict, model: str) -> dict:
+    """Ask the LLM to adjudicate between two competing, independently-agreed
+    candidate answers. Returns {"winner": "leader"|"challenger", "reason": str}.
+    Fails safe to "leader" (keep the consensus-based winner) on any error —
+    this is a refinement on top of consensus voting, not a replacement for it.
+
+    When the disagreement plausibly stems from a *named* ambiguity type we
+    already detect elsewhere in the pipeline (currently: unqualified "change"
+    wording — see _detect_unqualified_change_ambiguity), the prompt is
+    sharpened with reasoning specific to that ambiguity rather than a generic
+    "which is more correct" question — a live test found the generic framing
+    alone doesn't reliably out-guess an arbitrary annotator convention on a
+    genuinely ambiguous question.
+    """
+    ambiguity_addendum = ""
+    if _detect_unqualified_change_ambiguity(instruction):
+        ambiguity_addendum = _CHANGE_AMBIGUITY_TIEBREAK_ADDENDUM
+
+    system = (
+        "You are adjudicating between two SQL query results that both claim "
+        "to answer the same question — each independently agreed upon by "
+        "multiple different query-generation strategies, so neither is a "
+        "fluke. Decide which result more correctly and faithfully answers "
+        "the question, based on its SQL logic and its actual returned data. "
+        f"{ambiguity_addendum}"
+        'Respond with STRICT JSON only: {"winner": "A"|"B", "reason": '
+        '"<short concrete reason>"}.'
+    )
+    user = (
+        f"Question:\n{instruction}\n\n"
+        f"Result A ({leader.get('consensus_votes')} independent candidates agreed):\n"
+        f"SQL:\n{leader.get('final_sql', '')}\n\n"
+        f"Result A preview:\n{_preview_candidate_result(leader)}\n\n"
+        f"Result B ({challenger.get('consensus_votes')} independent candidates agreed):\n"
+        f"SQL:\n{challenger.get('final_sql', '')}\n\n"
+        f"Result B preview:\n{_preview_candidate_result(challenger)}\n\n"
+        "Which result (A or B) more correctly answers the question? Return strict JSON."
+    )
+    try:
+        # 300 tokens was tried first and consistently produced unparseable
+        # (truncated) JSON — some models (e.g. gpt-5.5) spend part of their
+        # max_tokens budget on invisible reasoning tokens before any visible
+        # output, so a budget sized only for the visible JSON reply is too
+        # tight. 1500 gives real headroom; this call is infrequent (only
+        # close ties reach it at all — see _find_tiebreak_pair) so the extra
+        # cost ceiling per call is immaterial.
+        raw = call_llm(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            model=model, temperature=0.0, max_tokens=1500,
+        )
+    except Exception:
+        log.debug("LLM tie-break call failed; keeping consensus leader", exc_info=True)
+        return {"winner": "leader", "reason": "tie-break call failed"}
+
+    text = (raw or "").strip()
+    if "```" in text:
+        text = text.split("```")[1] if len(text.split("```")) > 1 else text
+        text = text.removeprefix("json").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start:end + 1]
+    try:
+        data = json.loads(text)
+        winner_letter = str(data.get("winner", "A")).strip().upper()
+        winner = "challenger" if winner_letter == "B" else "leader"
+        return {"winner": winner, "reason": str(data.get("reason", "") or "")}
+    except (ValueError, TypeError):
+        log.warning("LLM tie-break returned unparseable output: %r", raw)
+        return {"winner": "leader", "reason": "tie-break output unparseable"}
 
 
 def _candidate_to_result(
@@ -183,31 +396,45 @@ def run_best_of_n(
     enable_self_critic: bool = False,
     self_critic_max: int = 1,
     enable_consensus: bool = True,
+    enable_tiebreak: bool = True,
     exploration_context: str | None = None,
     plan_context: str | None = None,
     date_encodings: dict | None = None,
+    pregenerated_candidates: list[CandidateItem] | None = None,
 ) -> dict:
-    """Generate N candidates, execute+repair, verify, select the best."""
+    """Generate N candidates, execute+repair, verify, select the best.
+
+    *pregenerated_candidates*: skip Step 1 (candidate generation) and use
+    this list directly — for the batch-generation path, where candidates for
+    every instance in a run were already produced via one shared OpenAI
+    Batch API job (see eval/experiment_runner.py's batched orchestration and
+    candidate_generator.build_raw_sql_candidate_requests /
+    assemble_candidates_from_batch_results). None (default): generate
+    candidates synchronously here, exactly as before.
+    """
     log.info(
         "Best-of-%d for instance %s: %s", n, instance_id, instruction[:80]
     )
 
     # ── Step 1: Generate N candidates ────────────────────────────────
-    candidates = generate_candidate_sqls(
-        db_id=db_id,
-        instruction=instruction,
-        schema_slice=schema_slice,
-        model=model,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        n=n,
-        strategies=strategies,
-        semantic_context=semantic_context,
-        decompose=decompose,
-        sample_context=sample_context,
-        exploration_context=exploration_context,
-        plan_context=plan_context,
-    )
+    if pregenerated_candidates is not None:
+        candidates = pregenerated_candidates
+    else:
+        candidates = generate_candidate_sqls(
+            db_id=db_id,
+            instruction=instruction,
+            schema_slice=schema_slice,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            n=n,
+            strategies=strategies,
+            semantic_context=semantic_context,
+            decompose=decompose,
+            sample_context=sample_context,
+            exploration_context=exploration_context,
+            plan_context=plan_context,
+        )
 
     # Infer expected shape once for the instruction
     expected_shape = infer_expected_shape(instruction)
@@ -328,6 +555,36 @@ def run_best_of_n(
     # ── Step 4: Select best ──────────────────────────────────────────
     candidate_results.sort(key=lambda c: c["score"], reverse=True)
     best = candidate_results[0]
+    tiebreak_note = None
+
+    # Plurality voting can be fooled when several independent strategies
+    # happen to share the same mistake. When a *different*, itself
+    # independently-supported cluster is competing for the top spot, ask an
+    # LLM to adjudicate directly between the two rather than automatically
+    # deferring to whichever cluster is larger. This only fires when both
+    # sides have real (>1-candidate) support — see _find_tiebreak_pair.
+    if enable_consensus and enable_tiebreak:
+        pair = _find_tiebreak_pair(candidate_results)
+        if pair is not None:
+            leader, challenger = pair
+            verdict = _llm_tiebreak(instruction, leader, challenger, model)
+            flipped = verdict["winner"] == "challenger"
+            _mark_tiebreak_used(flipped)
+            log.info(
+                "Tie-break (leader=cand%s votes=%s vs challenger=cand%s votes=%s): "
+                "winner=%s reason=%s",
+                leader["candidate_id"], leader.get("consensus_votes"),
+                challenger["candidate_id"], challenger.get("consensus_votes"),
+                verdict["winner"], verdict["reason"][:160],
+            )
+            if flipped:
+                best = challenger
+                tiebreak_note = (
+                    f"tie-break overrode consensus leader (cand{leader['candidate_id']}, "
+                    f"{leader.get('consensus_votes')} votes) in favor of cand"
+                    f"{challenger['candidate_id']} ({challenger.get('consensus_votes')} "
+                    f"votes): {verdict['reason']}"
+                )
 
     # Build selection reason with semantic details
     reason_parts = [
@@ -340,6 +597,8 @@ def run_best_of_n(
         )
     else:
         reason_parts.append("best score among failed candidates")
+    if tiebreak_note:
+        reason_parts.append(tiebreak_note)
 
     # Mention shape signals
     shape_notes = []

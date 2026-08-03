@@ -19,7 +19,11 @@ import yaml
 
 from ..chroma.chroma_store import ChromaStore
 from .budget import classify_column, trim_to_budget
-from .connectivity import expand_connectivity, expand_join_graph_neighbors
+from .connectivity import (
+    expand_connectivity,
+    expand_connectivity_with_join_graph,
+    expand_join_graph_neighbors,
+)
 from .hybrid_retriever import HybridRetriever, ScoredItem
 from .schema_slice import ColumnSlice, SchemaSlice, TableSlice
 
@@ -172,8 +176,17 @@ def build_schema_slice(
     max_tables: int | None = None,
     max_columns_per_table: int | None = None,
     connectivity_rounds: int = 1,
+    connectivity_mode: str = "graph",
 ) -> tuple[SchemaSlice, list[ScoredItem], list[ScoredItem]]:
-    """Run full retrieval pipeline and return (slice, table_items, column_items)."""
+    """Run full retrieval pipeline and return (slice, table_items, column_items).
+
+    *connectivity_mode*: "graph" (default) uses expand_connectivity_with_join_graph
+    — real JoinCard-backed bridge-table selection, falling back to the
+    "heuristic" (shared join-key-column-name) method automatically if a given
+    db_id has no JoinCards indexed. "heuristic" forces the shared-column-name
+    method unconditionally — this is the intentionally weaker ablation arm
+    ``--disable_join_graph`` should select.
+    """
     table_items = retriever.retrieve_tables(query, db_id, top_k=top_k_tables)
     column_items = retriever.retrieve_columns(query, db_id, top_k=top_k_columns)
 
@@ -252,9 +265,14 @@ def build_schema_slice(
 
     # Connectivity expansion
     if connectivity_rounds > 0:
-        expand_connectivity(
-            schema_slice, retriever.collection, max_rounds=connectivity_rounds
-        )
+        if connectivity_mode == "graph":
+            expand_connectivity_with_join_graph(
+                schema_slice, retriever.collection, allow_heuristic_fallback=True
+            )
+        else:
+            expand_connectivity(
+                schema_slice, retriever.collection, max_rounds=connectivity_rounds
+            )
 
     # Join-graph neighbor expansion: add geo/location tables when question needs them
     expand_join_graph_neighbors(schema_slice, retriever.collection, query)

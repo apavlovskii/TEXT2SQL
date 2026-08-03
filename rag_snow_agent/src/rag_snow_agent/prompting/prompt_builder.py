@@ -55,6 +55,10 @@ Rules:
 Do NOT access VARIANT ARRAY columns directly — they require LATERAL FLATTEN.
 - When the question requires multi-step logic (find top X, then query X; set operations; \
 multi-level aggregation), use the "ctes" array to build a pipeline of steps.
+- When you need a derived/computed value that is NOT a plain column — a ratio, a formula, \
+a CASE WHEN pivot, a geo-distance calculation, a log transform, etc. — put it in \
+"computed_columns". Do NOT put an expression into an "aggregations" entry's "column" or \
+"func" field; those must be a real column name and a real Snowflake aggregate function name.
 
 {snowflake_guidance}
 
@@ -68,9 +72,10 @@ Plan JSON schema:
   "geo_filters": [{{"expression": "ST_DWITHIN(ST_MAKEPOINT(t1.\"lon\", t1.\"lat\"), ST_MAKEPOINT(-73.764, 41.197), 32186.8)"}}],
   "group_by": ["table.column", ...],
   "aggregations": [{{"func": "COUNT", "table": "...", "column": "...", "alias": "..."}}],
+  "computed_columns": [{{"table": "...", "expression": "...", "alias": "...", "agg_func": null}}],
   "order_by": [{{"expr": "...", "direction": "ASC"}}],
   "limit": null,
-  "ctes": [{{"name": "step_name", "description": "what this step computes", "selected_tables": [...], "joins": [...], "geo_joins": [...], "flatten_ops": [...], "filters": [...], "geo_filters": [...], "group_by": [...], "aggregations": [...], "order_by": [...], "limit": null}}],
+  "ctes": [{{"name": "step_name", "description": "what this step computes", "selected_tables": [...], "joins": [...], "geo_joins": [...], "flatten_ops": [...], "filters": [...], "geo_filters": [...], "group_by": [...], "aggregations": [...], "computed_columns": [...], "order_by": [...], "limit": null}}],
   "notes": null
 }}
 
@@ -81,6 +86,49 @@ flatten_ops usage:
 - "extract_fields": nested paths to extract (e.g. "page.pagePath" becomes value:"page":"pagePath")
 - When referencing flattened data in filters/aggregations, set table to the flatten alias \
 and column to the nested field path (e.g. table="h", column="page.pagePath")
+
+filters usage:
+- "op" must be EXACTLY one of: =, !=, <>, <, >, <=, >=, IN, LIKE, ILIKE, NOT LIKE, NOT ILIKE, \
+BETWEEN, IS NULL, IS NOT NULL. For a not-null check use the full "IS NOT NULL" — NOT "IS NOT" \
+on its own. "value" must be null when op is IS NULL or IS NOT NULL.
+- To compare a column against ANOTHER column (not a literal) — e.g. wins = the max_wins column \
+produced by an earlier CTE — set "value" to "source_name.column_name" (the other column's \
+table/CTE name, dot, column name), e.g. {{"table": "TEAMS", "column": "wins", "op": "=", \
+"value": "season_max_wins.max_wins"}}. Only do this when "source_name" is something this step \
+actually reads from (in "selected_tables" or an upstream CTE) — otherwise it's just a literal.
+- For op="BETWEEN", "value" is the two bounds as "lower AND upper", e.g. "2021-01-01 AND \
+2021-12-31" — NOT a bracketed list like "[2021-01-01, 2021-12-31]".
+- For op="IN", "value" is a comma-separated list, e.g. "NY, CA, TX" (a bracketed \
+"[NY, CA, TX]" is also accepted, but the plain comma-separated form is preferred).
+
+computed_columns usage (for any derived/computed value):
+- "table": the PRIMARY table/CTE the expression is anchored to — but the expression MAY \
+freely reference bare column names from ANY OTHER table/CTE this step joins too (i.e. any \
+entry in this step's "selected_tables"). The compiler resolves each bare column to whichever \
+of those sources actually has it. This is normal and expected for percentage/ratio columns in \
+a step that joins two upstream CTEs, e.g. "table": "monthly_totals" with expression \
+"ROUND(100.0 * coinjoin_tx_count / NULLIF(all_tx_count, 0), 1)" where coinjoin_tx_count comes \
+from a DIFFERENT joined CTE than all_tx_count — do not avoid this pattern, just pick either \
+joined source as "table" and reference whatever columns you need.
+- "expression": a raw SQL expression using PLAIN column names, e.g. "distance_m / duration_sec" \
+or "CASE WHEN year_num = 2016 THEN order_count ELSE 0 END" — do NOT add table prefixes or quotes \
+around column names yourself, the compiler resolves that.
+- "expression" must NOT reference another computed_column's or aggregation's own "alias" from \
+THIS SAME step — SQL cannot see a sibling SELECT-list alias within the same SELECT. If a value \
+depends on a value computed earlier in the same step, split that dependency into its own \
+earlier CTE step instead, and reference its output column from the later step.
+- "alias": the output column name
+- "agg_func": a real Snowflake aggregate (SUM, AVG, MAX, MIN, COUNT, etc.) to wrap the WHOLE \
+expression in, or null if the expression is already the value to select (a per-row formula, a \
+CASE WHEN, or an expression that already contains its own aggregate calls)
+- Example — average speed (distance / duration), a per-row ratio, no aggregate wrapper needed:
+  {{"table": "TRIPS", "expression": "ST_DISTANCE(ST_MAKEPOINT(start_lon, start_lat), ST_MAKEPOINT(end_lon, end_lat)) / duration_sec", "alias": "avg_speed_mps", "agg_func": null}}
+- Example — average of a log-transformed column, using agg_func to wrap the expression:
+  {{"table": "GENE_EXPR", "expression": "LOG(10, normalized_count + 1)", "alias": "avg_log10_expr", "agg_func": "AVG"}}
+- Example — a CASE WHEN pivot column, wrapped in SUM:
+  {{"table": "ORDERS", "expression": "CASE WHEN year_num = 2016 THEN order_count ELSE 0 END", "alias": "orders_2016", "agg_func": "SUM"}}
+- Example — ratio across two joined CTEs (see note above), no aggregate wrapper needed:
+  {{"table": "monthly_totals", "expression": "ROUND(100.0 * coinjoin_tx_count / NULLIF(all_tx_count, 0), 1)", "alias": "coinjoin_tx_pct", "agg_func": null}}
 
 geo_joins usage (for spatial joins):
 - Use geo_joins when you need to JOIN tables using geospatial predicates (ST_WITHIN, ST_CONTAINS, ST_INTERSECTS)
@@ -102,7 +150,13 @@ ctes usage:
 - Each CTE is an independent query step, compiled as WITH name AS (SELECT ...)
 - The final SELECT reads from the last CTE
 - CTE selected_tables can reference upstream CTE names or real tables
-- Use ctes for multi-step logic; leave empty [] for simple single-step queries\
+- Use ctes for multi-step logic; leave empty [] for simple single-step queries
+- If a LATER step's join/filter/aggregation/computed_column/group_by/order_by needs a column \
+from an EARLIER CTE step, that earlier step must actually produce it — either as a real \
+"group_by" entry, an "aggregations" alias, or a "computed_columns" alias. A CTE with none of \
+those set only exposes a wildcard passthrough of its own single source's columns; anything \
+beyond that (e.g. an alias computed two steps back) will not reach a step three steps later \
+unless every step in between re-exposes it.\
 """
 
 _PLAN_USER = """\
@@ -143,7 +197,11 @@ Write the SQL query.\
 
 _FIX_PLAN_SYSTEM = """\
 You are a SQL query planner for Snowflake databases.
-The previous plan used invalid identifiers. Fix the plan to use only columns present in the schema.
+The previous plan has one or more problems: invalid identifiers (columns/tables not \
+present in the schema) and/or type mismatches (e.g. a filter comparing a NUMBER column \
+to a date-shaped string literal — check whether that column is actually epoch/YYYYMMDD-\
+encoded and needs the literal converted to match, rather than compared directly).
+Fix the plan to resolve every error listed below.
 Return ONLY valid JSON matching the plan schema. No markdown, no explanation.\
 """
 
@@ -280,8 +338,13 @@ def build_fix_plan_prompt(
     """Return messages for fixing a plan that failed identifier validation."""
     schema_text = schema_slice.format_for_prompt()
     plan_json = json.dumps(plan.model_dump(), indent=2)
+    # Include the full plan-schema rules, not just _FIX_PLAN_SYSTEM's short
+    # framing — otherwise the repair attempt doesn't know the op enum,
+    # multi-source computed_column, or column-vs-column filter conventions,
+    # and can silently swap one violation for another while "fixing" it.
+    system_content = _FIX_PLAN_SYSTEM + "\n\n" + _PLAN_SYSTEM.format(snowflake_guidance=_SNOWFLAKE_GUIDANCE)
     return [
-        {"role": "system", "content": _FIX_PLAN_SYSTEM},
+        {"role": "system", "content": system_content},
         {
             "role": "user",
             "content": _FIX_PLAN_USER.format(
@@ -373,6 +436,10 @@ def get_dialect_discipline(api: str = "snowflake") -> str:
         "recursive SELECT ... JOIN name ...)`; anchor and recursive arms must have matching "
         "column counts; pick the correct anchor set (e.g. true roots).\n"
         "- NULL handling: use NVL/COALESCE for nullable columns; `=` never matches NULL.\n"
+        "- LISTAGG after a LEFT JOIN: if every value being aggregated for a group is NULL "
+        "(no match found), Snowflake's LISTAGG returns an EMPTY STRING, not NULL — this "
+        "silently breaks NULL-based comparisons/filters downstream. Wrap it: "
+        "`NULLIF(LISTAGG(DISTINCT col, ', '), '')`.\n"
         "- Include EVERY filter the question names (don't silently drop a constraint).\n"
         "- Ground answers in database values, not your own world knowledge."
     )
@@ -413,6 +480,105 @@ def _prepend_contexts(
     if plan_context:
         user_content = plan_context + "\n\n" + user_content
     return user_content
+
+
+# ── Strategy-specific RAW SQL prompts (no structured plan) ──────────────────
+#
+# The plan+compiler indirection measurably underperforms direct SQL
+# generation (raw LLM SQL: ~95% execute / ~35% gold-match vs. plan+compiler:
+# ~70% / ~10%, same instances, same model — see reports/experiments). This is
+# the default candidate-generation path as of that finding; compile_plan/
+# build_plan_prompt_with_strategy remain available via
+# generate_candidate_sqls(use_deterministic_compiler=True) for comparison.
+
+_RAW_SQL_SYSTEM = """\
+You are a Snowflake SQL expert.
+Given the database schema and a natural-language question, write a single Snowflake SQL query that answers the question.
+Return ONLY the SQL statement — no markdown, no explanation, no comments.
+
+{snowflake_guidance}\
+"""
+
+_RAW_SQL_STRATEGY_HINTS: dict[str, str] = {
+    "default": "",
+    "join_first": _STRATEGY_HINTS["join_first"],
+    "metric_first": _STRATEGY_HINTS["metric_first"],
+    "time_first": _STRATEGY_HINTS["time_first"],
+    "flatten_first": (
+        "\nPlanning priority: START by identifying VARIANT/ARRAY columns that need "
+        "LATERAL FLATTEN. Look at columns marked ARRAY in the schema — these MUST "
+        "use LATERAL FLATTEN to access nested data: "
+        '`SELECT f.value:"field"::TYPE FROM table, LATERAL FLATTEN(input => table."col") f`. '
+        "Do NOT access a VARIANT ARRAY column directly (e.g. in CAST/TRY_CAST or arithmetic) "
+        "without flattening it first."
+    ),
+    "cte_first": (
+        "\nPlanning priority: START by breaking the question into sequential steps. "
+        "Write each step as a CTE in a WITH clause: "
+        "`WITH step1 AS (...), step2 AS (SELECT ... FROM step1 ...) SELECT ... FROM step2`. "
+        "Build a pipeline: Step 1 filters base data, Step 2 aggregates, Step 3 ranks/filters "
+        "the aggregated results, etc. Use CTEs when the question involves: finding a top "
+        "entity then querying it, set operations (excluding, difference), or multi-level "
+        "aggregation."
+    ),
+    "geo_first": (
+        "\nPlanning priority: START by identifying any geospatial relationships in the question. "
+        "Look for keywords like: radius, distance, within, nearby, area, polygon, coordinates, "
+        "latitude, longitude, zip code, neighborhood, boundary, location. "
+        "When spatial relationships are needed:\n"
+        "1. Identify which columns hold GEOGRAPHY/GEOMETRY data or lat/lon coordinates.\n"
+        "2. Use a spatial predicate directly in the JOIN ... ON clause, e.g. "
+        '`ON ST_WITHIN(ST_POINT(t1."lon", t1."lat"), TO_GEOGRAPHY(t2."geom"))`.\n'
+        "3. Use a spatial predicate directly in WHERE, e.g. "
+        '`WHERE ST_DWITHIN(ST_MAKEPOINT(t1."lon", t1."lat"), ST_MAKEPOINT(-73.764, 41.197), 32186.8)`.\n'
+        "4. Convert miles to meters (1 mile = 1609.34 m) for distance thresholds.\n"
+        "5. Use TO_GEOGRAPHY() to convert stored geometry columns to GEOGRAPHY type.\n"
+        "6. Use ST_POINT(longitude, latitude) — note lon comes FIRST."
+    ),
+}
+
+
+def build_raw_sql_prompt_with_strategy(
+    instruction: str,
+    schema_slice: SchemaSlice,
+    strategy: str = "default",
+    memory_context: str | None = None,
+    join_hints: list[str] | None = None,
+    semantic_context: str | None = None,
+    decomposition_context: str | None = None,
+    sample_context: str | None = None,
+    exploration_context: str | None = None,
+    plan_context: str | None = None,
+) -> list[dict[str, str]]:
+    """Return raw-SQL-generation messages with an optional strategy hint.
+
+    Same structural-diversity mechanism as build_plan_prompt_with_strategy
+    (a strategy hint biasing where the LLM starts reasoning), but the LLM
+    writes SQL directly instead of a structured plan for compile_plan to
+    assemble.
+    """
+    hint = _RAW_SQL_STRATEGY_HINTS.get(strategy, "")
+    schema_text = schema_slice.format_for_prompt()
+    if join_hints:
+        schema_text += _format_join_hints(join_hints)
+    system_content = _RAW_SQL_SYSTEM.format(snowflake_guidance=_SNOWFLAKE_GUIDANCE)
+    if hint:
+        system_content += hint
+    system_content += get_dialect_discipline() + get_determinism_tips()
+    user_content = f"Database schema:\n{schema_text}\n\nQuestion: {instruction}"
+    user_content = _prepend_contexts(
+        user_content,
+        sample_context=sample_context, semantic_context=semantic_context,
+        decomposition_context=decomposition_context, memory_context=memory_context,
+        exploration_context=exploration_context, plan_context=plan_context,
+    )
+    return [
+        {"role": "system", "content": system_content},
+        {
+            "role": "user",
+            "content": user_content,
+        },
+    ]
 
 
 def build_plan_prompt_with_strategy(

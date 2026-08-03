@@ -4,7 +4,7 @@ Scoring rules:
   +100  if execution succeeds
   -10   per repair attempt
   -20   if result empty and instruction likely implies non-empty
-  +10   if expected small result and row_count <= 5
+  +10   if expected small result and 0 < row_count <= 5 (empty excluded)
   -15   if expected grouped output but row_count == 1
   +10   if expected aggregate output and row_count == 1
   +10   if expected time series and row_count in plausible range
@@ -12,7 +12,10 @@ Scoring rules:
   -15   if final error type is aggregation_error
   + score_delta from metamorphic checks
   + verifier score (currently stub = 0.0)
-  + consensus_bonus * (independent_votes - 1)  [self-consistency / MBR voting]
+  + consensus_bonus * (independent_votes - 1)  [self-consistency / MBR voting;
+    empty-result candidates are excluded from voting entirely — see
+    best_of_n._result_signature — since agreeing on zero rows carries no
+    real signal]
 """
 
 from __future__ import annotations
@@ -99,7 +102,7 @@ def _build_breakdown(
     if row_count is not None and row_count == 0:
         bd["empty_result"] = -s["empty_result_penalty"]
 
-    if row_count is not None and shape.expect_small_result and row_count <= 5:
+    if row_count is not None and shape.expect_small_result and 0 < row_count <= 5:
         bd["small_output_bonus"] = s["small_output_bonus"]
 
     if row_count is not None and shape.expect_grouped_output:

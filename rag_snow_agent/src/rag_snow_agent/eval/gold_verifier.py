@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import math
@@ -51,6 +52,42 @@ def _normalize(value):
     return value
 
 
+def _as_float(x) -> float | None:
+    """Return float(x) if x is numeric-like, else None.
+
+    ``isinstance(x, (int, float))`` (used by Spider2's own upstream
+    evaluate.py, which this replicates) misses ``decimal.Decimal`` —
+    Snowflake returns Decimal for any ROUND()/NUMBER-typed column, which is
+    extremely common. That means ``Decimal('1.7') == 1.7`` (Python: False,
+    since Decimal isn't a float subclass) falls through to the exact-equality
+    branch below and spuriously fails a numerically-identical result. Trying
+    float() directly is more robust than an isinstance allowlist — it also
+    covers numpy numeric scalars — and only affects our own scoring signal,
+    not the upstream-compatible shape of this function.
+    """
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_date_str(x) -> str | None:
+    """Return an ISO date/datetime string if x is a date-like value, else None.
+
+    Snowflake DATE/TIMESTAMP columns come back through the connector as
+    Python ``datetime.date``/``datetime.datetime`` (or a pandas Timestamp,
+    which subclasses datetime.datetime) — never as plain strings. A gold CSV
+    stores the same value as plain text (e.g. "2020-01-01"), read back by
+    pandas as a Python ``str``. ``datetime.date(2020,1,1) != "2020-01-01"``
+    even though ``str()`` of one equals the other exactly — without this,
+    every DATE/TIMESTAMP-typed result column fails comparison outright
+    regardless of whether the date is actually correct.
+    """
+    if isinstance(x, (datetime.date, datetime.datetime)):
+        return x.isoformat()
+    return None
+
+
 def _vectors_match(v1: list, v2: list, tol: float = 1e-2, ignore_order: bool = False) -> bool:
     """Compare two vectors with tolerance and optional order-ignoring."""
     v1 = [_normalize(x) for x in v1]
@@ -63,8 +100,17 @@ def _vectors_match(v1: list, v2: list, tol: float = 1e-2, ignore_order: bool = F
     for a, b in zip(v1, v2):
         if pd.isna(a) and pd.isna(b):
             continue
-        elif isinstance(a, (int, float)) and isinstance(b, (int, float)):
-            if not math.isclose(float(a), float(b), abs_tol=tol):
+        da, db = _as_date_str(a), _as_date_str(b)
+        if da is not None or db is not None:
+            # Compare against the counterpart's string form (whichever side
+            # is the plain string/gold value) rather than requiring both
+            # sides to be date objects — a gold CSV date is always a str.
+            if str(da if da is not None else a) != str(db if db is not None else b):
+                return False
+            continue
+        fa, fb = _as_float(a), _as_float(b)
+        if fa is not None and fb is not None:
+            if not math.isclose(fa, fb, abs_tol=tol):
                 return False
         elif a != b:
             return False

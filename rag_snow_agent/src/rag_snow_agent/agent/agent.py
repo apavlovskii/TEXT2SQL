@@ -70,52 +70,28 @@ def _persist_trace(
         log.warning("Failed to persist trace for %s", instance_id, exc_info=True)
 
 
-def solve_instance(
-    instance_id: str,
+def run_pregeneration_frontend(
     instruction: str,
     db_id: str,
     schema_slice: SchemaSlice,
     model: str,
     executor: SnowflakeExecutor,
-    temperature: float = 0.2,
-    max_tokens: int = 800,
-    max_repairs: int = 2,
-    explain_first: bool = True,
-    stop_on_repeated_error: bool = True,
-    best_of_n: int = 1,
-    candidate_strategies: list[str] | None = None,
-    selector_scoring: dict | None = None,
-    enable_verifier: bool = True,
-    enable_fingerprinting: bool = True,
-    enable_metamorphic: bool = True,
-    chroma_dir: str | None = None,
-    memory_enabled: bool = True,
-    chroma_store: ChromaStore | None = None,
-    gold_dir: str | Path | None = None,
-    max_same_error_type: int = 3,
-    semantic_context: str | None = None,
-    decompose: bool = False,
-    sample_context: str | None = None,
-    enable_self_critic: bool = False,
-    self_critic_max: int = 1,
-    enable_consensus: bool = True,
-    enable_exploration: bool = False,
-    enable_planning: bool = False,
-    exploration_max_probes: int = 6,
-) -> InstanceResult:
-    """Solve one instance.
+    enable_exploration: bool,
+    enable_planning: bool,
+    exploration_max_probes: int,
+    semantic_context: str | None,
+) -> tuple[str | None, str | None, dict]:
+    """Explore values → build an Information Aggregation plan (gold-free).
 
-    If *best_of_n* > 1, generates N candidates, executes+repairs each, and
-    selects the best. Otherwise uses the single-candidate M4 flow.
+    Extracted out of solve_instance() so the batch-generation orchestration
+    (see eval/experiment_runner.py) can run this per-instance, synchronous
+    step for every instance up front — it involves live Snowflake probes
+    interleaved with LLM calls, so it can't move to the OpenAI Batch API the
+    way candidate generation can — and only then batch the actual candidate
+    generation across all instances in one job.
+
+    Returns (exploration_context, plan_context, date_encodings).
     """
-    # Load eval standards once if gold_dir provided
-    _eval_standards: dict | None = None
-    if gold_dir:
-        from ..eval.gold_verifier import load_eval_standards
-        gold_path = Path(gold_dir)
-        _eval_standards = load_eval_standards(gold_path / "spider2snow_eval.jsonl")
-
-    # ── Pre-generation front-end: explore values → structured plan (gold-free) ──
     exploration_context: str | None = None
     plan_context: str | None = None
     date_encodings: dict = {}
@@ -151,6 +127,73 @@ def solve_instance(
             raise  # propagate so the runner checkpoints + pauses for clean resume
         except Exception:
             log.warning("Exploration/planning phase failed; continuing without", exc_info=True)
+    return exploration_context, plan_context, date_encodings
+
+
+def solve_instance(
+    instance_id: str,
+    instruction: str,
+    db_id: str,
+    schema_slice: SchemaSlice,
+    model: str,
+    executor: SnowflakeExecutor,
+    temperature: float = 0.2,
+    max_tokens: int = 800,
+    max_repairs: int = 2,
+    explain_first: bool = True,
+    stop_on_repeated_error: bool = True,
+    best_of_n: int = 1,
+    candidate_strategies: list[str] | None = None,
+    selector_scoring: dict | None = None,
+    enable_verifier: bool = True,
+    enable_fingerprinting: bool = True,
+    enable_metamorphic: bool = True,
+    chroma_dir: str | None = None,
+    memory_enabled: bool = True,
+    chroma_store: ChromaStore | None = None,
+    gold_dir: str | Path | None = None,
+    max_same_error_type: int = 3,
+    semantic_context: str | None = None,
+    decompose: bool = False,
+    sample_context: str | None = None,
+    enable_self_critic: bool = False,
+    self_critic_max: int = 1,
+    enable_consensus: bool = True,
+    enable_tiebreak: bool = True,
+    enable_exploration: bool = False,
+    enable_planning: bool = False,
+    exploration_max_probes: int = 6,
+    pregenerated_frontend: tuple[str | None, str | None, dict] | None = None,
+    pregenerated_candidates: list | None = None,
+) -> InstanceResult:
+    """Solve one instance.
+
+    If *best_of_n* > 1, generates N candidates, executes+repairs each, and
+    selects the best. Otherwise uses the single-candidate M4 flow.
+
+    *pregenerated_frontend*: (exploration_context, plan_context,
+    date_encodings) already computed elsewhere — skips re-running
+    run_pregeneration_frontend. *pregenerated_candidates*: candidates already
+    generated elsewhere (e.g. via a batch job) — skips Step 1 of Best-of-N.
+    Both None (default): behavior is unchanged from before batch-generation
+    support existed.
+    """
+    # Load eval standards once if gold_dir provided
+    _eval_standards: dict | None = None
+    if gold_dir:
+        from ..eval.gold_verifier import load_eval_standards
+        gold_path = Path(gold_dir)
+        _eval_standards = load_eval_standards(gold_path / "spider2snow_eval.jsonl")
+
+    if pregenerated_frontend is not None:
+        exploration_context, plan_context, date_encodings = pregenerated_frontend
+    else:
+        exploration_context, plan_context, date_encodings = run_pregeneration_frontend(
+            instruction=instruction, db_id=db_id, schema_slice=schema_slice,
+            model=model, executor=executor,
+            enable_exploration=enable_exploration, enable_planning=enable_planning,
+            exploration_max_probes=exploration_max_probes, semantic_context=semantic_context,
+        )
 
     if best_of_n > 1:
         result = _solve_best_of_n(
@@ -181,9 +224,11 @@ def solve_instance(
             enable_self_critic=enable_self_critic,
             self_critic_max=self_critic_max,
             enable_consensus=enable_consensus,
+            enable_tiebreak=enable_tiebreak,
             exploration_context=exploration_context,
             plan_context=plan_context,
             date_encodings=date_encodings,
+            pregenerated_candidates=pregenerated_candidates,
         )
         if memory_enabled and result.success:
             _persist_trace(
@@ -363,9 +408,11 @@ def _solve_best_of_n(
     enable_self_critic: bool = False,
     self_critic_max: int = 1,
     enable_consensus: bool = True,
+    enable_tiebreak: bool = True,
     exploration_context: str | None = None,
     plan_context: str | None = None,
     date_encodings: dict | None = None,
+    pregenerated_candidates: list | None = None,
 ) -> InstanceResult:
     """Best-of-N flow (Milestone 5)."""
     bon_result = run_best_of_n(
@@ -396,9 +443,11 @@ def _solve_best_of_n(
         enable_self_critic=enable_self_critic,
         self_critic_max=self_critic_max,
         enable_consensus=enable_consensus,
+        enable_tiebreak=enable_tiebreak,
         exploration_context=exploration_context,
         plan_context=plan_context,
         date_encodings=date_encodings,
+        pregenerated_candidates=pregenerated_candidates,
     )
 
     # Summarize candidates (without heavy data like rows_sample)
@@ -415,6 +464,7 @@ def _solve_best_of_n(
             "score": c["score"],
             "error_type": c["error_type"],
             "consensus_votes": c.get("consensus_votes", 0),
+            "verifier_score": c.get("verifier_score"),
             "final_sql": c.get("final_sql", ""),
         })
 

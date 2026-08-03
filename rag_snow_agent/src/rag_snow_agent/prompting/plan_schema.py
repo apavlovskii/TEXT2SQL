@@ -67,6 +67,25 @@ class PlanOrderBy(_CoercingBase):
     direction: str = "ASC"  # ASC / DESC
 
 
+class PlanComputedColumn(_CoercingBase):
+    """A derived/computed value that is not a plain column — a formula,
+    ratio, CASE WHEN pivot, geo-distance calculation, log transform, etc.
+
+    Use this instead of stuffing an expression into PlanAggregation.column or
+    PlanAggregation.func. Reference real columns in *expression* by their
+    plain name (e.g. "duration_sec", not "t1.duration_sec" or a quoted
+    string) — the compiler resolves the table alias and exact casing for you.
+    """
+
+    table: str  # table whose columns *expression* references
+    expression: str  # raw SQL expression, e.g. "ST_DISTANCE(...) / duration_sec"
+    alias: str
+    agg_func: str | None = None  # real aggregate to wrap the expression in (SUM, AVG, MAX, ...);
+    # leave null if the expression is already the full value to select (a
+    # per-row formula, a CASE WHEN, or an expression that already contains
+    # its own aggregate calls)
+
+
 class PlanFlatten(_CoercingBase):
     """Describes a LATERAL FLATTEN on a VARIANT ARRAY column."""
 
@@ -113,6 +132,7 @@ class PlanCTE(_CoercingBase):
     geo_filters: list[PlanGeoFilter] = []  # geospatial WHERE predicates
     group_by: list[str] = []
     aggregations: list[PlanAggregation] = []
+    computed_columns: list[PlanComputedColumn] = []  # derived/formula columns
     order_by: list[PlanOrderBy] = []
     limit: int | None = None
 
@@ -126,6 +146,7 @@ class QueryPlan(_CoercingBase):
     geo_filters: list[PlanGeoFilter] = []  # geospatial WHERE predicates
     group_by: list[str] = []  # "table.column" or just "column"
     aggregations: list[PlanAggregation] = []
+    computed_columns: list[PlanComputedColumn] = []  # derived/formula columns
     order_by: list[PlanOrderBy] = []
     limit: int | None = None
     ctes: list[PlanCTE] = []  # multi-step CTE pipeline (optional)

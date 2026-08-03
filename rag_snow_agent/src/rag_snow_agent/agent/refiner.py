@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..chroma.chroma_store import ChromaStore
-from ..prompting.sql_compiler import rewrite_date_encoding, rewrite_date_sharded_tables
+from ..prompting.sql_compiler import (
+    rewrite_date_encoding,
+    rewrite_date_sharded_tables,
+    rewrite_listagg_nullif,
+)
 from ..retrieval.schema_slice import SchemaSlice
 from ..snowflake.executor import ExecutionResult, SnowflakeExecutor
 from ..snowflake.probes import probe_column_exists
@@ -318,11 +323,14 @@ def refine_sql(
     def _maybe_rewrite_shards(s: str) -> str:
         """Deterministic rewrites on generated SQL: date-shard unions + epoch date
         encoding (so a wrong YYYYMMDD comparison on an epoch column is always fixed,
-        regardless of what the LLM emitted). Shard rewrite is idempotent."""
+        regardless of what the LLM emitted) + LISTAGG NULLIF-wrapping (so a
+        LEFT JOIN with no match can't silently turn into an empty string
+        instead of NULL). All three rewrites are idempotent."""
         if "_date_shard_union" not in s:
             s = rewrite_date_sharded_tables(s, schema_slice)
         if date_encodings:
             s = rewrite_date_encoding(s, date_encodings)
+        s = rewrite_listagg_nullif(s)
         return s
 
     # Apply the deterministic rewrites to the initial SQL too (not just repairs).
@@ -603,6 +611,187 @@ def _format_result_preview(exec_result, max_rows: int = 8, max_cell: int = 60) -
     return "\n".join(lines)
 
 
+def _detect_all_null_columns(exec_result) -> list[str]:
+    """Return column names whose value is NULL in every sampled row.
+
+    Deterministic, DB-side signal (no LLM judgment involved) — catches the
+    case where a repair loop patches a broken expression into something that
+    merely *executes* (e.g. ``AVG(CAST(NULL AS FLOAT))``) rather than fixing
+    the underlying column/filter problem, discarding the actual computation
+    while still returning a well-formed, non-empty result.
+    """
+    cols = exec_result.column_names or []
+    rows = exec_result.rows_sample or []
+    if not cols or not rows:
+        return []
+    all_null: list[str] = []
+    for i, col in enumerate(cols):
+        values = []
+        for row in rows:
+            if isinstance(row, dict):
+                values.append(row.get(col))
+            else:
+                values.append(row[i] if i < len(row) else None)
+        if values and all(v is None for v in values):
+            all_null.append(col)
+    return all_null
+
+
+_SALIENT_TERM_RE = re.compile(r"'[^']{2,40}'|\"[^\"]{2,40}\"|\b[A-Z][A-Za-z0-9]{2,}\b")
+_SALIENT_STOPWORDS = {
+    "The", "What", "Which", "How", "For", "Each", "This", "That", "With",
+    "Provide", "Calculate", "Return", "Among", "Based", "First", "Then",
+    "Also", "Round", "Only", "Those", "Where", "From", "Into", "Take",
+}
+
+
+def _detect_missing_salient_terms(instruction: str, sql: str) -> list[str]:
+    """Heuristically flag quoted values / proper-noun-like tokens from the
+    question that don't appear anywhere in the generated SQL.
+
+    Deliberately loose (case-insensitive substring match, no stemming) — this
+    is a hint for the self-critique LLM to weigh, not an automatic fail, since
+    a term can legitimately be resolved into a different literal (e.g. an
+    entity resolved via exploration) or a synonymous column reference.
+    """
+    terms = set()
+    for m in _SALIENT_TERM_RE.finditer(instruction):
+        term = m.group(0).strip("'\"")
+        if term and term not in _SALIENT_STOPWORDS and len(term) > 2:
+            terms.add(term)
+    sql_lower = sql.lower()
+    return sorted(t for t in terms if t.lower() not in sql_lower)
+
+
+_SUPERLATIVE_HIGH_RE = re.compile(
+    r"\b(highest|greatest|largest|biggest|most|maximum|longest|newest|latest|richest)\b",
+    re.IGNORECASE,
+)
+_SUPERLATIVE_LOW_RE = re.compile(
+    r"\b(lowest|smallest|least|minimum|shortest|oldest|earliest)\b",
+    re.IGNORECASE,
+)
+_QUALIFY_TOP1_RE = re.compile(
+    r"QUALIFY\s+ROW_NUMBER\(\)\s*OVER\s*\([^()]*?ORDER\s+BY\s+([^()]*?)\)\s*(?:=\s*1|<=\s*\d+)",
+    re.IGNORECASE | re.DOTALL,
+)
+_LIMIT_RE = re.compile(r"\bLIMIT\s+(\d+)", re.IGNORECASE)
+
+
+def _infer_superlative_direction(instruction: str) -> str | None:
+    """Return 'desc' if the question asks for a maximum/highest-style value,
+    'asc' for a minimum/lowest-style value, or None if both or neither kind
+    of wording appears — a question can legitimately ask about both extremes
+    at once (e.g. "highest AND lowest month"), and guessing there would be
+    worse than not checking at all.
+    """
+    has_high = bool(_SUPERLATIVE_HIGH_RE.search(instruction))
+    has_low = bool(_SUPERLATIVE_LOW_RE.search(instruction))
+    if has_high and not has_low:
+        return "desc"
+    if has_low and not has_high:
+        return "asc"
+    return None
+
+
+def _detect_sort_direction_mismatch(instruction: str, sql: str) -> str | None:
+    """Deterministically flag a clear inversion between the question's
+    explicit superlative wording and the SQL's actual top-N/top-1 direction.
+
+    Conservative by construction: only fires when the instruction contains
+    unambiguous single-direction wording AND the SQL contains one of two
+    well-defined top-N patterns (QUALIFY ROW_NUMBER() top-1-per-group, or a
+    final ORDER BY ... LIMIT <=20) whose direction contradicts it. Anything
+    else (no superlative wording, no recognizable top-N pattern, or both
+    directions mentioned) returns None rather than guess.
+    """
+    wanted = _infer_superlative_direction(instruction)
+    if wanted is None:
+        return None
+
+    m = _QUALIFY_TOP1_RE.search(sql)
+    if m:
+        order_clause = m.group(1)
+        actual = "desc" if re.search(r"\bDESC\b", order_clause, re.IGNORECASE) else "asc"
+        if actual != wanted:
+            return (
+                f"Question implies '{wanted.upper()}' order (superlative wording) but "
+                f"the QUALIFY ROW_NUMBER() top-row selection sorts '{actual.upper()}' — "
+                "this likely returns the opposite extreme from what was asked."
+            )
+        return None
+
+    last_order = None
+    for om in re.finditer(r"ORDER\s+BY\s+", sql, re.IGNORECASE):
+        last_order = om
+    if last_order is not None:
+        tail = sql[last_order.end():last_order.end() + 200]
+        lm = _LIMIT_RE.search(tail)
+        if lm and int(lm.group(1)) <= 20:
+            first_key = re.split(r",|\bLIMIT\b", tail, maxsplit=1, flags=re.IGNORECASE)[0]
+            actual = "desc" if re.search(r"\bDESC\b", first_key, re.IGNORECASE) else "asc"
+            if actual != wanted:
+                return (
+                    f"Question implies '{wanted.upper()}' order (superlative wording) but "
+                    f"the final ORDER BY ... LIMIT {lm.group(1)} sorts '{actual.upper()}' — "
+                    "this likely returns the opposite extreme from what was asked."
+                )
+    return None
+
+
+_ENUMERATE_DOMAIN_RE = re.compile(
+    r"\bfor\s+each\b|\bfor\s+every\b|\beach\s+(year|month|day|quarter|week)\b",
+    re.IGNORECASE,
+)
+_JOIN_KEYWORD_RE = re.compile(r"\bJOIN\s+(?:\"?\w+\"?\.)*\"?(\w*)\"?", re.IGNORECASE)
+_OUTER_PRESERVING_PREFIX_RE = re.compile(r"\b(LEFT|RIGHT|FULL)\b", re.IGNORECASE)
+_DERIVED_STATS_TABLE_RE = re.compile(r"(STANDINGS|RANKING|LEADERBOARD)", re.IGNORECASE)
+
+
+def _detect_lossy_join_risk(instruction: str, sql: str) -> str | None:
+    """Heuristically flag an INNER (or bare, which defaults to INNER) JOIN to
+    a table whose name suggests derived/computed standings-or-ranking data,
+    on a question that asks for a result across an enumerated domain ("for
+    each year", "every month", ...).
+
+    Rationale: tables like DRIVER_STANDINGS or CONSTRUCTOR_STANDINGS are
+    often themselves derived from a more complete base table (e.g. RACES
+    goes back further than DRIVER_STANDINGS has data for) — an INNER JOIN
+    to them silently drops any period the derived table doesn't cover,
+    which is easy to miss since the query still executes and returns a
+    plausible-looking (just incomplete) result. LEFT/RIGHT/FULL (OUTER)
+    joins already preserve the other side's rows, so they're excluded — the
+    specific risk here is rows silently vanishing, which only an INNER join
+    can do. This is a hint, not a verdict — the join may well be intentional
+    and complete; only the LLM reviewer, weighing the actual schema and row
+    counts, can tell.
+    """
+    if not _ENUMERATE_DOMAIN_RE.search(instruction):
+        return None
+    table_name = None
+    for jm in _JOIN_KEYWORD_RE.finditer(sql):
+        # Look back a short window for LEFT/RIGHT/FULL — covers "LEFT JOIN",
+        # "LEFT OUTER JOIN", etc. regardless of whether OUTER is spelled out.
+        prefix = sql[max(0, jm.start() - 15):jm.start()]
+        if _OUTER_PRESERVING_PREFIX_RE.search(prefix):
+            continue
+        if _DERIVED_STATS_TABLE_RE.search(jm.group(1)):
+            table_name = jm.group(1)
+            break
+    if table_name is None:
+        return None
+    return (
+        f"Possible hint (unverified): the question asks for a result across every "
+        f"period in a domain (\"for each year/month/...\"), and the SQL INNER JOINs "
+        f"to {table_name!r}, whose name suggests derived/computed standings or "
+        "ranking data. Such tables sometimes cover a narrower range than the base "
+        "entity table (e.g. missing early years) — an INNER JOIN to them silently "
+        "drops any period they don't cover, rather than erroring. Check whether the "
+        "result actually spans the full domain the question implies, and if not, "
+        "whether a fallback/alternate source is needed for the missing periods."
+    )
+
+
 def _self_critique(
     instruction: str,
     sql: str,
@@ -617,7 +806,32 @@ def _self_critique(
     or wrong filter, wrong/extra columns, suspicious empty/degenerate result),
     not on stylistic doubts. Returns {"problem": bool, "reason": str}; any
     parsing/LLM failure returns {"problem": False} so the loop fails safe.
+
+    Three deterministic, no-LLM-judgment-needed signals augment the LLM
+    review: a column that's NULL in every returned row, and a sort-direction
+    inversion against explicit superlative wording ("highest"/"lowest" etc.),
+    both short-circuit straight to a flagged problem; question terms missing
+    from the SQL text, and a JOIN to a derived-looking standings/ranking
+    table on a "for each <period>" question, are surfaced as explicit hints
+    in the prompt rather than left for the LLM to notice unprompted.
     """
+    all_null_cols = _detect_all_null_columns(exec_result)
+    if all_null_cols:
+        return {
+            "problem": True,
+            "reason": (
+                f"Column(s) {', '.join(all_null_cols)} are NULL in every "
+                "returned row — the query executes but the requested value "
+                "was never actually computed."
+            ),
+        }
+
+    sort_mismatch = _detect_sort_direction_mismatch(instruction, sql)
+    if sort_mismatch:
+        return {"problem": True, "reason": sort_mismatch}
+
+    missing_terms = _detect_missing_salient_terms(instruction, sql)
+    lossy_join_hint = _detect_lossy_join_risk(instruction, sql)
     preview = _format_result_preview(exec_result)
     system = (
         "You are a meticulous SQL reviewer. You are given a natural-language "
@@ -630,11 +844,25 @@ def _self_critique(
         "mere style. Respond with STRICT JSON only: "
         '{"problem": true|false, "reason": "<short concrete reason or empty>"}.'
     )
+    hint = ""
+    if missing_terms:
+        hint = (
+            "\nPossible hint (unverified — a heuristic scan, not a fact): these "
+            f"terms from the question don't appear anywhere in the SQL text: "
+            f"{', '.join(missing_terms)}. This can be a false alarm (the term "
+            "may have been resolved to a different literal, or matched via a "
+            "synonymous column) — only treat it as a problem if you can "
+            "independently confirm the SQL actually omits something the "
+            "question requires.\n"
+        )
+    if lossy_join_hint:
+        hint += f"\n{lossy_join_hint}\n"
     user = (
         f"Question:\n{instruction}\n\n"
         f"Schema (subset):\n{schema_text[:2500]}\n\n"
         f"SQL:\n{sql}\n\n"
-        f"Result preview:\n{preview}\n\n"
+        f"Result preview:\n{preview}\n"
+        f"{hint}\n"
         "Does this result plausibly and correctly answer the question? "
         "Return strict JSON."
     )

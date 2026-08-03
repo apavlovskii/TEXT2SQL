@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 from pydantic import ValidationError
 
-from ..prompting.constraints import ValidationResult, validate_sql
+from ..prompting.constraints import ValidationResult, validate_plan_types, validate_sql
 from ..prompting.plan_schema import QueryPlan
 from ..prompting.prompt_builder import (
     build_fix_json_prompt,
@@ -113,7 +113,7 @@ def run_pipeline(
         decomp = decompose_question(instruction, model=decomp_model)
         result.llm_calls += 1
         decomposition_context = render_decomposition_for_prompt(
-            decomp, semantic_context=semantic_context,
+            decomp, semantic_context=semantic_context, output_format="plan",
         ) or None
 
     # ── Step 1: Generate plan ───────────────────────────────────────────
@@ -170,8 +170,12 @@ def run_pipeline(
 
     result.sql = result.compiled_sql
 
-    # ── Step 4: Validate identifiers ────────────────────────────────────
+    # ── Step 4: Validate identifiers + filter-value types ────────────────
     validation = validate_sql(result.sql, schema_slice)
+    type_errors = validate_plan_types(plan, schema_slice)
+    if type_errors:
+        validation.valid = False
+        validation.errors.extend(type_errors)
     result.validation = validation
 
     # ── Step 4b: Validate against decomposition subgoals ──────────────
@@ -213,6 +217,10 @@ def run_pipeline(
 
         result.sql = result.compiled_sql
         validation = validate_sql(result.sql, schema_slice)
+        type_errors = validate_plan_types(plan, schema_slice)
+        if type_errors:
+            validation.valid = False
+            validation.errors.extend(type_errors)
         result.validation = validation
 
         if validation.valid:

@@ -1,8 +1,14 @@
 """CLI to train a learned verifier model from candidate run logs.
 
-Usage:
+Usage (candidate-log JSONL directory — is_best-labeled, legacy format):
     python -m rag_snow_agent.agent.train_verifier \
         --run_dir reports/candidate_logs \
+        --output_model rag_snow_agent/models/verifier.joblib
+
+Usage (accumulated experiment_runner history — gold_matched-labeled, preferred):
+    python -m rag_snow_agent.agent.train_verifier \
+        --experiments_dir reports/experiments \
+        --instructions_jsonl ../Spider2/spider2-snow/spider2-snow.jsonl \
         --output_model rag_snow_agent/models/verifier.joblib
 """
 
@@ -17,12 +23,27 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-from ..observability.training_data import build_verifier_dataset
+from ..observability.training_data import (
+    build_verifier_dataset,
+    build_verifier_dataset_from_experiment_results,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train verifier model from candidate logs")
-    parser.add_argument("--run_dir", required=True, help="Directory with JSONL candidate logs")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--run_dir", help="Directory with legacy is_best-labeled candidate-log JSONL files")
+    source.add_argument(
+        "--experiments_dir",
+        help="reports/experiments-style directory of run subfolders, each with an "
+        "instance_results.jsonl; trains on real gold_matched labels instead of "
+        "the is_best heuristic (requires --instructions_jsonl)",
+    )
+    parser.add_argument(
+        "--instructions_jsonl",
+        help="Spider2 question-bank split (e.g. spider2-snow.jsonl) to look up instruction "
+        "text by instance_id; required with --experiments_dir",
+    )
     parser.add_argument(
         "--output_model",
         default="rag_snow_agent/models/verifier.joblib",
@@ -32,10 +53,20 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--random_state", type=int, default=42, help="Random seed")
     args = parser.parse_args(argv)
 
+    if args.experiments_dir and not args.instructions_jsonl:
+        parser.error("--experiments_dir requires --instructions_jsonl")
+
     # Build dataset
-    rows = build_verifier_dataset(args.run_dir)
+    if args.experiments_dir:
+        rows = build_verifier_dataset_from_experiment_results(
+            args.experiments_dir, args.instructions_jsonl
+        )
+        source_desc = f"--experiments_dir for *.jsonl under {args.experiments_dir}"
+    else:
+        rows = build_verifier_dataset(args.run_dir)
+        source_desc = f"--run_dir {args.run_dir}"
     if not rows:
-        print("ERROR: No training rows found. Check --run_dir for *.jsonl files.", file=sys.stderr)
+        print(f"ERROR: No training rows found. Check {source_desc}", file=sys.stderr)
         sys.exit(1)
 
     print(f"Built dataset with {len(rows)} rows")
@@ -58,7 +89,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Train: {len(X_train)}, Test: {len(X_test)}")
 
     # Train
-    model = LogisticRegression(max_iter=1000, random_state=args.random_state)
+    model = LogisticRegression(max_iter=5000, random_state=args.random_state)
     model.fit(X_train, y_train)
 
     # Evaluate

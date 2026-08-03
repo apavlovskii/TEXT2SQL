@@ -86,18 +86,55 @@ class SampleRecordStore:
             kwargs["embedding_function"] = self._chroma_store._embedding_fn
         return self._chroma_store.client.get_or_create_collection(**kwargs)
 
-    def upsert_samples(self, cards: list[SampleRecordCard]) -> int:
+    def upsert_samples(self, cards: list[SampleRecordCard], max_batch_tokens: int = 200_000) -> int:
+        """Upsert in batches capped by both count and estimated embedding
+        tokens. A fixed item-count batch (the previous behavior) can still
+        blow through OpenAI's 300k-tokens-per-request limit when documents
+        are wide (many columns / long text values) — this instead closes a
+        batch as soon as either 500 items or ``max_batch_tokens`` estimated
+        tokens is reached, whichever comes first. Individual documents are
+        also truncated to stay under the embedding model's 8192-token
+        per-input cap (a wide-column or VARIANT-heavy table can blow past
+        that on its own even with only 2 sample rows).
+        """
         if not cards:
             return 0
         col = self.collection()
-        batch_size = 500
-        for i in range(0, len(cards), batch_size):
-            chunk = cards[i : i + batch_size]
+        max_batch_items = 500
+        max_doc_tokens = 8000  # headroom under the model's 8192 hard cap
+        batch: list[SampleRecordCard] = []
+        batch_docs: list[str] = []
+        batch_tokens = 0
+
+        def _flush() -> None:
+            if not batch:
+                return
             col.upsert(
-                ids=[c.chroma_id() for c in chunk],
-                documents=[c.document for c in chunk],
-                metadatas=[c.chroma_metadata() for c in chunk],
+                ids=[c.chroma_id() for c in batch],
+                documents=list(batch_docs),
+                metadatas=[c.chroma_metadata() for c in batch],
             )
+
+        for card in cards:
+            doc = card.document
+            doc_tokens = _token_count(doc)
+            if doc_tokens > max_doc_tokens:
+                encoded = _enc.encode(doc)
+                doc = _enc.decode(encoded[:max_doc_tokens]) + "\n... (truncated)"
+                doc_tokens = _token_count(doc)
+            if batch and (
+                len(batch) >= max_batch_items
+                or batch_tokens + doc_tokens > max_batch_tokens
+            ):
+                _flush()
+                batch = []
+                batch_docs = []
+                batch_tokens = 0
+            batch.append(card)
+            batch_docs.append(doc)
+            batch_tokens += doc_tokens
+        _flush()
+
         log.info("Upserted %d SampleRecordCards", len(cards))
         return len(cards)
 

@@ -26,7 +26,7 @@ import snowflake.connector
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-PARTITIONED_DBS = {"GA4", "GA360"}
+PARTITIONED_DBS = {"GA4", "GA360", "GITHUB_REPOS_DATE"}
 SAMPLE_SIZE = 5
 
 

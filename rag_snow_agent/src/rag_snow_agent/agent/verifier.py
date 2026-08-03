@@ -16,7 +16,7 @@ from .verifier_features import extract_candidate_features
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[4] / "models" / "verifier.joblib"
+_DEFAULT_MODEL_PATH = Path(__file__).resolve().parents[3] / "models" / "verifier.joblib"
 _cached_model = None
 
 
@@ -44,11 +44,26 @@ def reset_verifier_cache() -> None:
 
 
 def _mark_verifier_used() -> None:
-    """Best-effort telemetry mark; never raises into the scoring path."""
+    """Best-effort telemetry mark; never raises into the scoring path.
+
+    Marked for both the trained-model and heuristic-fallback paths, so on
+    its own it only means "score_candidate_semantics ran" — not "the trained
+    model produced this score". Use ``_mark_verifier_model_used`` to tell
+    the two apart.
+    """
     try:
         from ..observability.instance_telemetry import telemetry
         telemetry.mark("verifier_used")
         telemetry.increment("verifier_scores_computed")
+    except Exception:
+        pass
+
+
+def _mark_verifier_model_used() -> None:
+    """Best-effort telemetry mark for the trained-model path specifically."""
+    try:
+        from ..observability.instance_telemetry import telemetry
+        telemetry.mark("verifier_model_used")
     except Exception:
         pass
 
@@ -126,6 +141,7 @@ def score_candidate_semantics(
         proba = model.predict_proba(X)
         score = float(proba[0][1])  # probability of class 1
         _mark_verifier_used()
+        _mark_verifier_model_used()
         return score
     except Exception:
         log.warning("Verifier predict_proba failed; using heuristic", exc_info=True)

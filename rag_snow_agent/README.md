@@ -23,6 +23,8 @@ A full-stack chatbot that converts natural language analytics questions into exe
 - **Agent**: Custom RAG pipeline — ChromaDB vector retrieval → LLM plan generation → deterministic SQL compilation → Snowflake execution → error-specific repair loop
 - **Datasource**: SQLite mirror (default, for local development) or Snowflake
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a full component-by-component breakdown of the agent pipeline and the specific techniques it relies on.
+
 ---
 
 ## Prerequisites

@@ -60,6 +60,30 @@ class SchemaSlice:
     def token_estimate(self) -> int:
         return sum(t.token_estimate for t in self.tables)
 
+    @staticmethod
+    def from_table_info(db_id: str, tables) -> "SchemaSlice":
+        """Build a SchemaSlice directly from snowflake.metadata.extract_tables()
+        output (TableInfo/ColumnInfo) — the full, unfiltered INFORMATION_SCHEMA
+        result, not a retrieval-trimmed slice. Used by eval harnesses that fetch
+        the whole schema (no retrieval step) but still need a real SchemaSlice
+        for compile_plan()'s casing correction or the validate_* functions'
+        column-existence/type checks.
+        """
+        return SchemaSlice(
+            db_id=db_id,
+            tables=[
+                TableSlice(
+                    qualified_name=t.qualified_name,
+                    comment=t.comment,
+                    columns=[
+                        ColumnSlice(name=c.column_name, data_type=c.data_type, original_name=c.column_name)
+                        for c in t.columns
+                    ],
+                )
+                for t in tables
+            ],
+        )
+
     def format_for_prompt(self) -> str:
         """Render a compact, LLM-friendly text block."""
         lines: list[str] = [f"-- Database: {self.db_id}"]

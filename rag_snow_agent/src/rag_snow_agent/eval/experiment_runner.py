@@ -145,6 +145,8 @@ def apply_cli_toggles(config: dict, args: argparse.Namespace) -> dict:
         config.setdefault("agent", {})["self_critic_max"] = args.self_critic_max
     if getattr(args, "disable_consensus", False):
         features["consensus"] = False
+    if getattr(args, "disable_tiebreak", False):
+        features["tiebreak"] = False
     if getattr(args, "enable_exploration", False):
         features["exploration"] = True
         config.setdefault("exploration", {})["max_probes"] = args.exploration_max_probes
@@ -179,6 +181,7 @@ def write_manifest(
         "disable_semantic": getattr(args, "disable_semantic", False),
         "enable_self_critic": getattr(args, "enable_self_critic", False),
         "disable_consensus": getattr(args, "disable_consensus", False),
+        "disable_tiebreak": getattr(args, "disable_tiebreak", False),
         "eval_gold_dir": getattr(args, "eval_gold_dir", None),
         "enable_exploration": getattr(args, "enable_exploration", False),
         "enable_planning": getattr(args, "enable_planning", False),
@@ -440,6 +443,213 @@ def preflight_check(
     print()
 
 
+def _prefetch_batch_candidates(
+    instances: list[dict],
+    config: dict,
+    args: argparse.Namespace,
+    resume_batch_id: str | None = None,
+) -> dict[str, tuple]:
+    """Run everything up to (but not including) candidate generation for
+    every instance, then generate ALL instances' Best-of-N candidates in ONE
+    OpenAI Batch API job instead of N separate synchronous calls per
+    instance — a flat 50% discount on those tokens, at the cost of an
+    unpredictable wait (up to 24h) before the run's main loop can proceed.
+
+    Only the candidate-generation step batches. Retrieval (Chroma + the
+    embeddings endpoint, not chat completions — not part of what's batched)
+    and the exploration/planning front-end (interleaved with live Snowflake
+    probes, can't move to a batch job at all) still run synchronously per
+    instance here, exactly as they would inside solve_instance() — this
+    function exists so that synchronous work happens once per instance
+    up front, and only the actual candidate-generation LLM calls get
+    batched, instead of duplicating that expensive part per instance.
+
+    Returns {instance_id: ((exploration_context, plan_context,
+    date_encodings), candidates)}. An instance missing from the result
+    (e.g. a Snowflake or retrieval failure during prefetch) falls back to
+    the normal synchronous path in the caller's main loop — solve_instance()
+    treats pregenerated_frontend/pregenerated_candidates=None as "compute it
+    yourself", so a partial prefetch degrades gracefully per-instance rather
+    than failing the whole run.
+
+    *resume_batch_id*: reuse an already-completed (or still-running) batch
+    job instead of submitting a new one — for recovering from a crash after
+    the batch finished but before Phase 3 (execution/repair/selection)
+    processed it, e.g. a quota exhaustion during a candidate's repair
+    attempt. Retrieval/exploration/planning still re-run per instance (they
+    were never part of the batch and aren't persisted anywhere), but no new
+    candidate-generation tokens are spent. Requires the SAME instance
+    selection (--split_jsonl/--limit/--exclude_geospatial) as the run that
+    produced the batch, since custom_ids are "{instance_id}::{candidate_id}"
+    — a different instance order or set won't line up with the batch's
+    results.
+    """
+    from ..agent.agent import run_pregeneration_frontend
+    from ..agent.candidate_generator import (
+        STRATEGIES,
+        assemble_candidates_from_batch_results,
+        build_raw_sql_candidate_requests,
+    )
+    from ..agent.llm_client import BatchRequest, poll_batch, retrieve_batch_results, submit_batch
+    from ..chroma.chroma_store import ChromaStore
+    from ..retrieval.debug_retrieve import build_schema_slice
+    from ..retrieval.hybrid_retriever import HybridRetriever
+    from ..snowflake.executor import SnowflakeExecutor
+
+    sf_cfg = config.get("snowflake", {})
+    ret_cfg = config.get("retrieval", {})
+    agent_cfg = config.get("agent", {})
+    llm_cfg = config.get("llm", {})
+    sem_cfg = config.get("semantic_layer", {})
+    sample_cfg = config.get("sample_records", {})
+    feat_cfg = config.get("features", {})
+
+    store = ChromaStore(persist_dir=args.chroma_dir)
+    collection = store.schema_collection()
+    retriever = HybridRetriever(collection)
+
+    prepared: dict[str, dict] = {}
+    all_requests: list = []
+
+    for instance in instances:
+        instance_id = instance.get("instance_id", "")
+        instruction = instance.get("instruction", "")
+        db_id = instance.get("db_id", "")
+        external_knowledge = instance.get("external_knowledge")
+
+        try:
+            model = llm_cfg.get("model", "gpt-4o-mini")
+            geo_model = llm_cfg.get("geo_model")
+            if geo_model and _is_geo_query(external_knowledge, instruction):
+                model = geo_model
+            max_tokens = llm_cfg.get("max_output_tokens", 4096)
+            decompose = agent_cfg.get("decompose_questions", False)
+            bon = agent_cfg.get("best_of_n", 1)
+
+            schema_slice, _, _ = build_schema_slice(
+                retriever=retriever, query=instruction, db_id=db_id,
+                top_k_tables=ret_cfg.get("top_k_tables", 8),
+                top_k_columns=ret_cfg.get("top_k_columns", 25),
+                max_schema_tokens=ret_cfg.get("max_schema_tokens", 2500),
+                connectivity_mode=ret_cfg.get("connectivity_mode", "graph"),
+            )
+
+            semantic_context = None
+            if sem_cfg.get("enabled", False):
+                from ..retrieval.semantic_retriever import retrieve_semantic_context
+                semantic_context = retrieve_semantic_context(
+                    db_id=db_id, instruction=instruction, chroma_store=store,
+                    top_k=sem_cfg.get("retrieval_top_k", 8),
+                )
+
+            sample_context = None
+            if sample_cfg.get("enabled", False):
+                from ..chroma.sample_records import SampleRecordStore, build_sample_context
+                sample_store = SampleRecordStore(store)
+                table_fqns = [t.qualified_name for t in schema_slice.tables]
+                table_docs = sample_store.get_sample_context_for_tables(db_id, table_fqns)
+                sample_context = build_sample_context(
+                    table_docs, max_tokens=sample_cfg.get("max_prompt_tokens", 800),
+                )
+
+            if external_knowledge and external_knowledge not in ("None", "none", "null"):
+                ek_content = _load_external_knowledge(external_knowledge)
+                if ek_content:
+                    ek_section = f"External knowledge ({external_knowledge}):\n{ek_content}"
+                    semantic_context = (ek_section + "\n\n" + semantic_context) if semantic_context else ek_section
+
+            executor = SnowflakeExecutor(
+                credentials_path=args.credentials, db_id=db_id,
+                statement_timeout_sec=sf_cfg.get("statement_timeout_sec", 120),
+                sample_rows=config.get("agent", {}).get("sample_rows", 20),
+            )
+            try:
+                exploration_context, plan_context, date_encodings = run_pregeneration_frontend(
+                    instruction=instruction, db_id=db_id, schema_slice=schema_slice,
+                    model=model, executor=executor,
+                    enable_exploration=feat_cfg.get("exploration", False),
+                    enable_planning=feat_cfg.get("planning", False),
+                    exploration_max_probes=config.get("exploration", {}).get("max_probes", 6),
+                    semantic_context=semantic_context,
+                )
+            finally:
+                executor.close()
+
+            pending = build_raw_sql_candidate_requests(
+                instruction=instruction, schema_slice=schema_slice, model=model,
+                max_tokens=max_tokens, n=bon, strategies=STRATEGIES,
+                temperature=llm_cfg.get("temperature", 0.2),
+                semantic_context=semantic_context, decompose=decompose,
+                sample_context=sample_context,
+                exploration_context=exploration_context, plan_context=plan_context,
+            )
+
+            prepared[instance_id] = {
+                "schema_slice": schema_slice,
+                "model": model,
+                "max_tokens": max_tokens,
+                "pending": pending,
+                "frontend": (exploration_context, plan_context, date_encodings),
+            }
+            for req in pending:
+                all_requests.append(BatchRequest(
+                    custom_id=f"{instance_id}::{req.candidate_id}",
+                    messages=req.messages,
+                    model=model,
+                    temperature=req.temperature,
+                    max_tokens=max_tokens,
+                ))
+        except Exception:
+            log.warning(
+                "Batch prefetch failed for %s — will fall back to the synchronous path",
+                instance_id, exc_info=True,
+            )
+
+    if not all_requests:
+        return {}
+
+    if resume_batch_id:
+        log.info(
+            "Resuming existing batch job %s (skipping re-submission) for %d candidate "
+            "requests across %d instances",
+            resume_batch_id, len(all_requests), len(prepared),
+        )
+        batch = poll_batch(resume_batch_id, poll_interval=30.0)
+        batch_results = retrieve_batch_results(batch)
+    else:
+        log.info(
+            "Submitting one batch job for %d candidate requests across %d instances",
+            len(all_requests), len(prepared),
+        )
+        batch_id = submit_batch(all_requests)
+        batch = poll_batch(batch_id, poll_interval=30.0)
+        batch_results = retrieve_batch_results(batch)
+
+    # Assembly can itself call the LLM (a repair attempt when a batched
+    # candidate fails validation — see _postprocess_raw_sql_candidate), so
+    # it can fail for reasons unrelated to the batch job that just
+    # succeeded (e.g. quota exhaustion, a transient API error). One
+    # instance's assembly failure must not discard every other instance's
+    # already-completed batch results — it falls back to the synchronous
+    # path in the caller's main loop instead, which has its own
+    # LLMQuotaExhausted handling (checkpoint + clean resume) if the failure
+    # turns out to be systemic rather than instance-specific.
+    result: dict[str, tuple] = {}
+    for instance_id, p in prepared.items():
+        try:
+            candidates = assemble_candidates_from_batch_results(
+                p["pending"], batch_results, custom_id_prefix=instance_id,
+                schema_slice=p["schema_slice"], model=p["model"], max_tokens=p["max_tokens"],
+            )
+            result[instance_id] = (p["frontend"], candidates)
+        except Exception:
+            log.warning(
+                "Assembling batch results failed for %s — falling back to the synchronous path",
+                instance_id, exc_info=True,
+            )
+    return result
+
+
 def run_experiment(args: argparse.Namespace) -> Path:
     """Orchestrate a full experiment run. Returns the experiment directory."""
     # Validate split_jsonl
@@ -467,6 +677,19 @@ def run_experiment(args: argparse.Namespace) -> Path:
         split_path, args.limit, exclude_geospatial=args.exclude_geospatial
     )
     log.info("Loaded %d instances from %s", len(instances), split_path)
+
+    # Batch-generation prefetch: run once, up front, for the whole run.
+    # Empty dict (default) means every instance falls through to the
+    # unchanged synchronous path below — this is the only behavioral branch
+    # point --use_batch_generation introduces.
+    batch_prefetch: dict[str, tuple] = (
+        _prefetch_batch_candidates(
+            instances, config, args,
+            resume_batch_id=getattr(args, "resume_batch_id", None),
+        )
+        if getattr(args, "use_batch_generation", False)
+        else {}
+    )
 
     # Preflight connectivity checks
     if not args.skip_preflight:
@@ -571,6 +794,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     top_k_tables=ret_cfg.get("top_k_tables", 8),
                     top_k_columns=ret_cfg.get("top_k_columns", 25),
                     max_schema_tokens=ret_cfg.get("max_schema_tokens", 2500),
+                    connectivity_mode=ret_cfg.get("connectivity_mode", "graph"),
                 )
 
                 # Determine solve parameters from config
@@ -588,6 +812,7 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 self_critic_enabled = feat_cfg.get("self_critic", False)
                 self_critic_max = agent_cfg.get("self_critic_max", 1)
                 consensus_enabled = feat_cfg.get("consensus", True)
+                tiebreak_enabled = feat_cfg.get("tiebreak", True)
                 exploration_enabled = feat_cfg.get("exploration", False)
                 planning_enabled = feat_cfg.get("planning", False)
                 exploration_max_probes = config.get("exploration", {}).get("max_probes", 6)
@@ -662,6 +887,16 @@ def run_experiment(args: argparse.Namespace) -> Path:
                          len(sample_context) if sample_context else 0,
                          "YES" if store else "NO")
 
+                # If this instance's candidates were already generated in the
+                # batch prefetch above, hand them to solve_instance() so it
+                # skips exploration/planning/generation and resumes straight
+                # into execution+repair+selection. Missing here (batch mode
+                # off, or this instance's prefetch failed) means both stay
+                # None and solve_instance() computes them itself, unchanged.
+                _prefetched = batch_prefetch.get(instance_id)
+                pregenerated_frontend = _prefetched[0] if _prefetched else None
+                pregenerated_candidates = _prefetched[1] if _prefetched else None
+
                 result = solve_instance(
                     instance_id=instance_id,
                     instruction=instruction,
@@ -686,9 +921,12 @@ def run_experiment(args: argparse.Namespace) -> Path:
                     enable_self_critic=self_critic_enabled,
                     self_critic_max=self_critic_max,
                     enable_consensus=consensus_enabled,
+                    enable_tiebreak=tiebreak_enabled,
                     enable_exploration=exploration_enabled,
                     enable_planning=planning_enabled,
                     exploration_max_probes=exploration_max_probes,
+                    pregenerated_frontend=pregenerated_frontend,
+                    pregenerated_candidates=pregenerated_candidates,
                 )
 
                 # Write Spider2 result.json
@@ -820,6 +1058,9 @@ def run_experiment(args: argparse.Namespace) -> Path:
                 "external_knowledge_injected": ek_injected,
                 "memory_hit": False,  # trace memory is persist-only in current production path
                 "verifier_used": bool(snap.get("flags", {}).get("verifier_used")),
+                "verifier_model_used": bool(snap.get("flags", {}).get("verifier_model_used")),
+                "tiebreak_used": bool(snap.get("flags", {}).get("tiebreak_used")),
+                "tiebreak_flipped_winner": bool(snap.get("flags", {}).get("tiebreak_flipped_winner")),
                 "verification_used": bool(snap.get("flags", {}).get("verification_used")),
                 "date_shard_rewrite_used": bool(snap.get("flags", {}).get("date_shard_rewrite_used")),
                 "date_shard_rewrites": int(snap.get("counters", {}).get("date_shard_rewrites", 0)),
@@ -915,10 +1156,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--enable_self_critic", action="store_true", help="Gold-free: LLM self-critique can trigger repair when no in-loop gold is available")
     parser.add_argument("--self_critic_max", type=int, default=1, help="Max self-critique-driven repairs per candidate (default 1)")
     parser.add_argument("--disable_consensus", action="store_true", help="Disable self-consistency (result-agreement) voting in Best-of-N selection")
+    parser.add_argument("--disable_tiebreak", action="store_true", help="Disable the LLM pairwise tie-break between competing consensus clusters")
     parser.add_argument("--enable_exploration", action="store_true", help="Gold-free pre-generation: run read-only probes to resolve entities to real values")
     parser.add_argument("--enable_planning", action="store_true", help="Gold-free pre-generation: build a structured Information Aggregation plan (requires --enable_exploration)")
     parser.add_argument("--exploration_max_probes", type=int, default=6, help="Max read-only exploration probes per instance (default 6)")
     parser.add_argument("--max_same_error_type", type=int, default=3, help="Stop retrying after N same-type errors per candidate (default 3)")
+    parser.add_argument("--use_batch_generation", action="store_true", help="Generate every instance's Best-of-N candidates in one OpenAI Batch API job (50%% off those tokens, unpredictable turnaround up to 24h) instead of synchronously per instance")
+    parser.add_argument("--resume_batch_id", type=str, default=None, help="Skip re-submitting a new batch job and instead poll/retrieve results from this already-submitted batch id (requires --use_batch_generation and identical instance set/ordering to the original submission)")
     return parser
 
 

@@ -19,6 +19,7 @@ class QuestionDecomposition(BaseModel):
     temporal_grain: str | None = None  # "month", "day", "year"
     filters: list[str] = []  # "campaign name contains 'Data Share'"
     cohort_conditions: list[str] = []  # "visitors who made at least one transaction"
+    derived_definitions: list[str] = []  # "CoinJoin = >2 outputs AND output_value <= input_value AND has multiple equal-value outputs"
     target_entity: str | None = None  # "distinct pseudo users", "products"
     target_grain: str | None = None  # "per visitor", "per product"
     measures: list[str] = []  # "COUNT DISTINCT", "SUM(revenue)"
@@ -35,12 +36,23 @@ You are a SQL query analyst. Given a natural-language question about a database,
 decompose it into structured semantic subgoals. Return ONLY valid JSON matching \
 the schema below. No markdown, no explanation.
 
+Distinguish "filters" from "derived_definitions": a filter is a simple condition \
+that gates which rows are included (e.g. "status = 'completed'"). A derived \
+definition is a compound, multi-condition classification that must ALL hold \
+together to define a named concept the question then uses elsewhere (e.g. a \
+question that says "X (defined as A, and B, and C)" — each of A, B, C is one \
+element of ONE derived_definitions entry, not separate filters). Getting this \
+distinction wrong is a common source of errors: derived definitions usually need \
+to be computed as an intermediate boolean/flag column (e.g. via CASE WHEN, \
+combined with AND), not applied directly as independent WHERE clauses.
+
 JSON schema:
 {
   "temporal_scope": "string or null — time period mentioned (e.g. 'year 2017')",
   "temporal_grain": "string or null — time granularity (e.g. 'month', 'day', 'year')",
-  "filters": ["list of filter conditions mentioned"],
+  "filters": ["list of simple, independent filter conditions mentioned"],
   "cohort_conditions": ["list of cohort/subset conditions"],
+  "derived_definitions": ["list of compound multi-condition concept definitions, each written as '<name> = <condition 1> AND <condition 2> AND ...'"],
   "target_entity": "string or null — what is being counted/measured",
   "target_grain": "string or null — per-what granularity",
   "measures": ["list of aggregation functions needed"],
@@ -95,8 +107,20 @@ def decompose_question(
 def render_decomposition_for_prompt(
     decomp: QuestionDecomposition,
     semantic_context: str | None = None,
+    output_format: str = "raw_sql",
 ) -> str:
-    """Render decomposition as a structured block for the plan prompt."""
+    """Render decomposition as a structured block for the generation prompt.
+
+    *output_format* controls the wording of the multi-step planning hint:
+    "raw_sql" (default, used by candidate_generator.py's active production
+    path) tells the LLM to write multiple WITH-clause CTEs directly in its
+    SQL output. "plan" (used only by the deprecated structured-plan/compiler
+    pipeline in plan_sql_pipeline.py) refers to that pipeline's actual
+    ``QueryPlan.ctes`` JSON field. These two output formats are not
+    interchangeable — raw-SQL generation has no such field, so getting this
+    wrong means telling the model to populate JSON structure that doesn't
+    exist in its response format.
+    """
     lines: list[str] = ["Question decomposition:"]
 
     if decomp.temporal_scope:
@@ -120,6 +144,9 @@ def render_decomposition_for_prompt(
 
     for f in decomp.filters:
         lines.append(f"  Filter: {f}")
+
+    for dd in decomp.derived_definitions:
+        lines.append(f"  Derived definition (compute as ONE combined boolean, all conditions must hold): {dd}")
 
     for c in decomp.cohort_conditions:
         lines.append(f"  Cohort: {c}")
@@ -148,13 +175,22 @@ def render_decomposition_for_prompt(
         decomp.set_operations
         or (decomp.ranking and len(decomp.filters) + len(decomp.cohort_conditions) > 1)
         or len(decomp.cohort_conditions) > 1
+        or decomp.derived_definitions
     )
     if needs_ctes:
-        step_count = 1 + len(decomp.set_operations) + len(decomp.cohort_conditions)
-        lines.append(
-            f"  Planning hint: This question requires ~{step_count} intermediate steps. "
-            f"Use the 'ctes' array to build a multi-step pipeline."
-        )
+        step_count = 1 + len(decomp.set_operations) + len(decomp.cohort_conditions) + len(decomp.derived_definitions)
+        if output_format == "plan":
+            lines.append(
+                f"  Planning hint: This question requires ~{step_count} intermediate steps. "
+                f"Use the 'ctes' array to build a multi-step pipeline."
+            )
+        else:
+            lines.append(
+                f"  Planning hint: This question requires ~{step_count} intermediate steps "
+                f"(e.g. resolve each cohort/filter condition, then combine). Write this as "
+                f"multiple WITH-clause CTEs in your SQL, one per intermediate step, rather "
+                f"than one large nested query."
+            )
 
     if decomp.nested_fields:
         lines.append(

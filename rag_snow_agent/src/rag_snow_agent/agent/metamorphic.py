@@ -133,11 +133,22 @@ def run_metamorphic_checks(
     checks: list[dict] = []
     total_delta = 0.0
 
-    # Check 1: shape consistency (cheap, no SQL execution)
+    # Check 1: shape consistency (cheap, no SQL execution). Informational
+    # only — its score_delta is NOT added to total_delta. selector.py's
+    # _build_breakdown independently computes the same grouped/aggregate/
+    # time-series/small-result signals directly from ExpectedShape (and more
+    # granularly — e.g. it correctly excludes row_count==0 from the small-
+    # result bonus, which this check does not). Folding this delta in here
+    # too was double-counting the identical signal into the composite score,
+    # roughly doubling its effective weight relative to consensus/verifier/
+    # execution-success — confirmed live: a real selection_reason showed
+    # both "aggregate shape confirmed, small result confirmed" (direct, +20)
+    # and "metamorphic delta=+15.0" (this check, re-scoring the same shape)
+    # on the same candidate.
     if len(checks) < max_checks:
         sc = _shape_consistency_check(row_count, expected_shape)
         if sc:
-            total_delta += sc.pop("score_delta", 0.0)
+            sc.pop("score_delta", None)
             checks.append(sc)
 
     # Check 2: limit expansion (requires executor)
