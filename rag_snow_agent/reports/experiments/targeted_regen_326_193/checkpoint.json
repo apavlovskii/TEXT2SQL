@@ -1,0 +1,11 @@
+{
+  "experiment": "targeted_regen_326_193",
+  "total_instances": 2,
+  "processed": 2,
+  "successes": 2,
+  "failures": 0,
+  "errors": 0,
+  "quota_stopped": false,
+  "stopped_at": null,
+  "complete": true
+}

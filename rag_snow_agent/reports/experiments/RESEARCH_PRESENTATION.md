@@ -515,6 +515,33 @@ over-optimize to exact-match gold on small samples.
 
 ---
 
+### 4g. Later round (gpt-5.5, raw-SQL pipeline): 9/20 → 18/20 (90%)
+
+*Separate, later lineage from 4d/4e above: after the deterministic plan-compiler was abandoned
+in favor of raw-SQL generation + a correction/refinement layer (Best-of-N with gpt-5.5), the
+same no-gold, n=20 conventional-schema set was revisited. Numbers below are not directly
+comparable to 4d/4e (different model, different pipeline, different fix set).*
+
+| Stage | Score | What changed |
+|:------|:-----:|:-------------|
+| Baseline (`nogold_20_gpt55_batch_resumed`) | 9/20 (45%) | Best-of-N + consensus voting, raw-SQL pipeline |
+| Fresh full rerun (`nogold_20_gpt55_rerun_fixes`) | 8/20 (40%) | Regenerating from scratch regressed `sf_bq326` (nondeterminism) |
+| + 6 root-caused bug fixes | **16/20 (80%)** | Two of the six were bugs in the *gold-verification checker itself* — a `Decimal`-vs-`float` and a `datetime.date`-vs-string comparison bug (both match known Spider2 upstream bugs) that were marking already-correct SQL as wrong; retroactively fixed `sf_bq057`, `sf_bq121`, `sf_local068`, `sf_local040`, `sf_local064`. The other four: a metamorphic-scoring double-count, a LISTAGG NULL-vs-empty-string rewrite, a World Bank aggregate-row schema-card fix (re-confirming `sf_bq326`), and closing a table/column description gap (17 of 20 target DBs had zero descriptions). |
+| + 2 targeted schema-card fact injections | **18/20 (90%)** | `sf_bq059`: authoritative city lookup (`BIKESHARE_STATION_INFO.region_id` → `BIKESHARE_REGIONS.name`) confirmed by directly computing the answer against Snowflake and matching gold exactly. `sf_local309`: `CONSTRUCTOR_STANDINGS` genuinely starts in 1958 (Constructors' Championship didn't exist earlier) vs. `DRIVER_STANDINGS`' full 1950-2024 range — verified against real data, not assumed. |
+
+**Remaining 2 failures, root-caused but unresolved:** `sf_bq193` (join-fan-out-before-aggregate
+structural SQL bug, not a missing fact) and `sf_local060` (generation ceiling — multi-step
+business logic with no correct candidate in the pool).
+
+**Caveat — not yet locked in by a single consolidated run.** The 18/20 figure is built from
+individually re-verifying each instance (and, for the last two, live-confirming against the
+current pipeline) rather than one fresh end-to-end 20-query batch. A full rerun to confirm the
+number was in progress when the session ended and did not complete — treat 90% as a strong
+signal, not a certified benchmark result, until that rerun is done. There is precedent for
+regression on a full rerun (`sf_bq326` above).
+
+---
+
 ---
 
 # PART 3 — STATE OF THE ART

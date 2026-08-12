@@ -1,0 +1,11 @@
+{
+  "experiment": "live_validate_schema_facts",
+  "total_instances": 2,
+  "processed": 2,
+  "successes": 2,
+  "failures": 0,
+  "errors": 0,
+  "quota_stopped": false,
+  "stopped_at": null,
+  "complete": true
+}

@@ -1,0 +1,11 @@
+{
+  "experiment": "cumulative_fix_check",
+  "total_instances": 5,
+  "processed": 5,
+  "successes": 5,
+  "failures": 0,
+  "errors": 0,
+  "quota_stopped": false,
+  "stopped_at": null,
+  "complete": true
+}

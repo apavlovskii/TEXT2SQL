@@ -1,0 +1,11 @@
+{
+  "experiment": "live_validate_tiebreak_ambiguity",
+  "total_instances": 1,
+  "processed": 1,
+  "successes": 1,
+  "failures": 0,
+  "errors": 0,
+  "quota_stopped": false,
+  "stopped_at": null,
+  "complete": true
+}

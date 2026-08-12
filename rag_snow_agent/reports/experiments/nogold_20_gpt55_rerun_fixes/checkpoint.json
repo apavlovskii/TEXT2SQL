@@ -1,0 +1,11 @@
+{
+  "experiment": "nogold_20_gpt55_rerun_fixes",
+  "total_instances": 20,
+  "processed": 20,
+  "successes": 20,
+  "failures": 0,
+  "errors": 0,
+  "quota_stopped": false,
+  "stopped_at": null,
+  "complete": true
+}

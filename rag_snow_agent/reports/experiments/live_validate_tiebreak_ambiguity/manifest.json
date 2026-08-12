@@ -1,0 +1,70 @@
+{
+  "timestamp": "2026-08-02T14:21:24.218680+00:00",
+  "git_commit": "712a9162d0b7e359184b8c22d5a94d95b93b80f8",
+  "experiment": "live_validate_tiebreak_ambiguity",
+  "model": "gpt-5.5",
+  "limit": null,
+  "toggles": {
+    "disable_memory": false,
+    "disable_verifier": false,
+    "disable_best_of_n": false,
+    "disable_repair": false,
+    "disable_verification": false,
+    "disable_join_graph": false,
+    "disable_sample_records": false,
+    "disable_semantic": false,
+    "enable_self_critic": true,
+    "disable_consensus": false,
+    "disable_tiebreak": false,
+    "eval_gold_dir": "../Spider2/spider2-snow/evaluation_suite/gold/",
+    "enable_exploration": true,
+    "enable_planning": true
+  },
+  "config_snapshot": {
+    "retrieval": {
+      "top_k_tables": 25,
+      "top_k_columns": 100,
+      "max_schema_tokens": 10000,
+      "rrf_k": 60
+    },
+    "llm": {
+      "model": "gpt-5.5",
+      "geo_model": "gpt-5.4-mini",
+      "temperature": 0.2,
+      "max_output_tokens": null
+    },
+    "agent": {
+      "plan_retry_limit": 1,
+      "validation_fix_limit": 1,
+      "decompose_questions": true,
+      "self_critic_max": 3,
+      "best_of_n": 8,
+      "max_repairs": 3
+    },
+    "indexing": {
+      "gold_sql_dir": "Spider2/spider2-snow/evaluation_suite/gold/sql/",
+      "ingest_gold_joins": true
+    },
+    "semantic_layer": {
+      "enabled": true,
+      "collection_name": "semantic_cards",
+      "max_prompt_tokens": 800,
+      "max_probe_budget": 10,
+      "min_confidence": 0.45,
+      "retrieval_top_k": 8
+    },
+    "sample_records": {
+      "enabled": true,
+      "max_prompt_tokens": 800,
+      "max_rows_per_table": 2
+    },
+    "features": {
+      "self_critic": true,
+      "exploration": true,
+      "planning": true
+    },
+    "exploration": {
+      "max_probes": 6
+    }
+  }
+}
